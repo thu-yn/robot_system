@@ -1,0 +1,35 @@
+# Build directories
+build/
+install/
+log/
+
+# IDE and editor files
+.vscode/
+.claude/
+
+# Cache directories
+.cache/
+
+# Compilation database
+compile_commands.json
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# ROS2 specific
+*.bag
+*.db3
+
+# Third party libraries (will be handled as submodules)
+src/third_party/

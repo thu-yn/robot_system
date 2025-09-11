@@ -1,0 +1,680 @@
+# 默认机器人能力配置文件
+# 此文件定义了各种机器人类型的默认能力参数
+# 用作配置文件缺失时的后备配置和新机器人类型的模板
+
+config_version: "1.0.0"
+last_updated: "2024-01-01T00:00:00Z"
+
+# 默认配置模板定义
+defaults:
+  # =========================
+  # 基础默认配置模板
+  # =========================
+  base_template:
+    firmware_version: "1.0.0"
+    
+    motion_capabilities:
+      max_linear_velocity: 1.0
+      max_angular_velocity: 1.0
+      max_acceleration: 1.0
+      turning_radius: 0.5
+      can_climb_stairs: false
+      can_balance_on_two_legs: false
+      locomotion_modes: ["walk"]
+      
+      quadruped_specific:
+        can_trot: false
+        can_bound: false
+        can_crawl: true
+        max_step_height: 0.1
+    
+    sensor_capabilities:
+      lidar:
+        has_2d_lidar: false
+        has_3d_lidar: false
+        max_range: 10.0
+        resolution: 1.0
+        accuracy: 0.1
+        scan_frequency: 10
+      
+      camera:
+        rgb_camera_count: 1
+        depth_camera_count: 0
+        max_resolution: "640x480"
+        max_framerate: 30
+        has_stereo_vision: false
+      
+      imu:
+        dof: 6
+        sampling_rate: 100
+        gyro_range: 250
+        accel_range: 2
+        has_magnetometer: false
+      
+      has_gps: false
+      has_encoders: true
+      has_force_sensors: false
+      has_temperature_sensors: false
+    
+    power_capabilities:
+      battery_capacity: 5000
+      operating_voltage: 12.0
+      charging_type: "contact"
+      charging_time_minutes: 120
+      estimated_runtime_hours: 2.0
+      supports_hot_swap: false
+      
+      has_power_monitoring: true
+      has_low_power_mode: false
+      has_hibernation_mode: false
+      can_estimate_remaining_time: true
+    
+    communication_capabilities:
+      supported_networks: ["ethernet", "wifi"]
+      supported_protocols: ["tcp", "udp"]
+      has_bluetooth: false
+      has_remote_control: false
+      
+      default_rmw_implementation: "rmw_fastrtps_cpp"
+      supported_rmw: ["rmw_fastrtps_cpp", "rmw_cyclonedds_cpp"]
+      supports_multi_domain: true
+      
+      preferred_dds: "fastrtps"
+      max_participants: 50
+      supports_security: false
+    
+    processing_capabilities:
+      cpu_architecture: "x86_64"
+      cpu_cores: 2
+      ram_gb: 4
+      storage_gb: 32
+      has_gpu: false
+      
+      supports_tensorflow: false
+      supports_pytorch: false
+      supports_tensorrt: false
+      supports_openvino: false
+      
+      max_control_frequency: 100.0
+      typical_latency_ms: 10.0
+    
+    physical_properties:
+      length: 0.5
+      width: 0.3
+      height: 0.2
+      weight: 5.0
+      max_payload: 1.0
+      
+      environmental:
+        min_temperature: -10
+        max_temperature: 45
+        ip_rating: 44
+        waterproof: false
+        dustproof: true
+      
+      mounting_points: ["top_mount"]
+
+  # =========================
+  # 四足机器人默认模板
+  # =========================
+  quadruped_template:
+    motion_capabilities:
+      max_linear_velocity: 1.2
+      max_angular_velocity: 1.5
+      max_acceleration: 1.5
+      turning_radius: 0.4
+      can_climb_stairs: true
+      can_balance_on_two_legs: false
+      locomotion_modes: ["walk", "trot"]
+      
+      quadruped_specific:
+        can_trot: true
+        can_bound: false
+        can_crawl: true
+        max_step_height: 0.2
+    
+    sensor_capabilities:
+      lidar:
+        has_2d_lidar: false
+        has_3d_lidar: true
+        max_range: 20.0
+        resolution: 0.5
+        accuracy: 0.05
+        scan_frequency: 10
+      
+      camera:
+        rgb_camera_count: 4
+        depth_camera_count: 1
+        max_resolution: "1280x720"
+        max_framerate: 30
+        has_stereo_vision: true
+      
+      imu:
+        dof: 6
+        sampling_rate: 500
+        gyro_range: 1000
+        accel_range: 8
+        has_magnetometer: false
+      
+      has_gps: false
+      has_encoders: true
+      has_force_sensors: true
+      has_temperature_sensors: true
+    
+    power_capabilities:
+      battery_capacity: 12000
+      operating_voltage: 24.0
+      charging_type: "wireless"
+      charging_time_minutes: 150
+      estimated_runtime_hours: 3.0
+      supports_hot_swap: false
+      
+      has_power_monitoring: true
+      has_low_power_mode: true
+      has_hibernation_mode: true
+      can_estimate_remaining_time: true
+    
+    processing_capabilities:
+      cpu_architecture: "ARM64"
+      cpu_cores: 4
+      ram_gb: 8
+      storage_gb: 64
+      has_gpu: false
+      
+      supports_tensorflow: true
+      supports_pytorch: false
+      supports_tensorrt: false
+      supports_openvino: false
+      
+      max_control_frequency: 500.0
+      typical_latency_ms: 5.0
+    
+    physical_properties:
+      length: 0.8
+      width: 0.4
+      height: 0.3
+      weight: 12.0
+      max_payload: 2.0
+      
+      environmental:
+        min_temperature: -10
+        max_temperature: 45
+        ip_rating: 54
+        waterproof: false
+        dustproof: true
+      
+      mounting_points: ["back_mount", "head_mount"]
+
+# 具体机器人类型的默认配置
+robots:
+  # =========================
+  # 通用机器人默认配置
+  # =========================
+  generic:
+    robot_type: 1
+    robot_model: "Generic Robot"
+    manufacturer: "Generic"
+    
+    # 继承基础模板，可以根据需要覆盖特定参数
+    motion_capabilities:
+      max_linear_velocity: 1.0
+      max_angular_velocity: 1.0
+      max_acceleration: 1.0
+      turning_radius: 0.5
+      can_climb_stairs: false
+      can_balance_on_two_legs: false
+      locomotion_modes: ["walk"]
+      
+      quadruped_specific:
+        can_trot: false
+        can_bound: false
+        can_crawl: true
+        max_step_height: 0.1
+    
+    sensor_capabilities:
+      lidar:
+        has_2d_lidar: false
+        has_3d_lidar: false
+        max_range: 10.0
+        resolution: 1.0
+        accuracy: 0.1
+        scan_frequency: 10
+      
+      camera:
+        rgb_camera_count: 1
+        depth_camera_count: 0
+        max_resolution: "640x480"
+        max_framerate: 30
+        has_stereo_vision: false
+      
+      imu:
+        dof: 6
+        sampling_rate: 100
+        gyro_range: 250
+        accel_range: 2
+        has_magnetometer: false
+      
+      has_gps: false
+      has_encoders: true
+      has_force_sensors: false
+      has_temperature_sensors: false
+    
+    power_capabilities:
+      battery_capacity: 5000
+      operating_voltage: 12.0
+      charging_type: "contact"
+      charging_time_minutes: 120
+      estimated_runtime_hours: 2.0
+      supports_hot_swap: false
+      
+      has_power_monitoring: true
+      has_low_power_mode: false
+      has_hibernation_mode: false
+      can_estimate_remaining_time: true
+    
+    communication_capabilities:
+      supported_networks: ["ethernet", "wifi"]
+      supported_protocols: ["tcp", "udp"]
+      has_bluetooth: false
+      has_remote_control: false
+      
+      default_rmw_implementation: "rmw_fastrtps_cpp"
+      supported_rmw: ["rmw_fastrtps_cpp", "rmw_cyclonedds_cpp"]
+      supports_multi_domain: true
+      
+      preferred_dds: "fastrtps"
+      max_participants: 50
+      supports_security: false
+    
+    processing_capabilities:
+      cpu_architecture: "x86_64"
+      cpu_cores: 2
+      ram_gb: 4
+      storage_gb: 32
+      has_gpu: false
+      
+      supports_tensorflow: false
+      supports_pytorch: false
+      supports_tensorrt: false
+      supports_openvino: false
+      
+      max_control_frequency: 100.0
+      typical_latency_ms: 10.0
+    
+    physical_properties:
+      length: 0.5
+      width: 0.3
+      height: 0.2
+      weight: 5.0
+      max_payload: 1.0
+      
+      environmental:
+        min_temperature: -10
+        max_temperature: 45
+        ip_rating: 44
+        waterproof: false
+        dustproof: true
+      
+      mounting_points: ["top_mount"]
+
+  # =========================
+  # Go2机器人默认配置
+  # =========================
+  go2:
+    robot_type: 2
+    robot_model: "Go2"
+    manufacturer: "Unitree"
+    
+    # Go2的默认配置（简化版）
+    motion_capabilities:
+      max_linear_velocity: 1.5
+      max_angular_velocity: 2.0
+      max_acceleration: 2.0
+      turning_radius: 0.5
+      can_climb_stairs: true
+      can_balance_on_two_legs: false
+      locomotion_modes: ["walk", "trot", "bound"]
+      
+      quadruped_specific:
+        can_trot: true
+        can_bound: true
+        can_crawl: true
+        max_step_height: 0.3
+    
+    sensor_capabilities:
+      lidar:
+        has_2d_lidar: false
+        has_3d_lidar: true
+        max_range: 40.0
+        resolution: 0.2
+        accuracy: 0.02
+        scan_frequency: 10
+      
+      camera:
+        rgb_camera_count: 5
+        depth_camera_count: 1
+        max_resolution: "1920x1080"
+        max_framerate: 30
+        has_stereo_vision: true
+      
+      imu:
+        dof: 6
+        sampling_rate: 1000
+        gyro_range: 2000
+        accel_range: 16
+        has_magnetometer: false
+      
+      has_gps: false
+      has_encoders: true
+      has_force_sensors: true
+      has_temperature_sensors: true
+    
+    power_capabilities:
+      battery_capacity: 15000
+      operating_voltage: 25.2
+      charging_type: "wireless"
+      charging_time_minutes: 120
+      estimated_runtime_hours: 4.0
+      supports_hot_swap: false
+      
+      has_power_monitoring: true
+      has_low_power_mode: true
+      has_hibernation_mode: true
+      can_estimate_remaining_time: true
+    
+    communication_capabilities:
+      supported_networks: ["wifi", "ethernet"]
+      supported_protocols: ["tcp", "udp"]
+      has_bluetooth: true
+      has_remote_control: true
+      
+      default_rmw_implementation: "rmw_cyclonedds_cpp"
+      supported_rmw: ["rmw_cyclonedds_cpp", "rmw_fastrtps_cpp"]
+      supports_multi_domain: true
+      
+      preferred_dds: "cyclonedds"
+      max_participants: 100
+      supports_security: false
+    
+    processing_capabilities:
+      cpu_architecture: "ARM64"
+      cpu_cores: 4
+      ram_gb: 8
+      storage_gb: 64
+      has_gpu: false
+      
+      supports_tensorflow: true
+      supports_pytorch: false
+      supports_tensorrt: false
+      supports_openvino: false
+      
+      max_control_frequency: 1000.0
+      typical_latency_ms: 5.0
+    
+    physical_properties:
+      length: 0.845
+      width: 0.405
+      height: 0.32
+      weight: 15.0
+      max_payload: 3.0
+      
+      environmental:
+        min_temperature: -10
+        max_temperature: 45
+        ip_rating: 54
+        waterproof: false
+        dustproof: true
+      
+      mounting_points: ["back_mount", "head_mount"]
+
+  # =========================
+  # Spot机器人默认配置 (预留)
+  # =========================
+  spot:
+    robot_type: 3
+    robot_model: "Spot"
+    manufacturer: "Boston Dynamics"
+    
+    # Spot的基本默认配置
+    motion_capabilities:
+      max_linear_velocity: 1.6
+      max_angular_velocity: 2.1
+      max_acceleration: 1.8
+      turning_radius: 0.4
+      can_climb_stairs: true
+      can_balance_on_two_legs: false
+      locomotion_modes: ["walk", "trot", "stairs_mode"]
+      
+      quadruped_specific:
+        can_trot: true
+        can_bound: false
+        can_crawl: true
+        max_step_height: 0.4
+    
+    sensor_capabilities:
+      lidar:
+        has_2d_lidar: false
+        has_3d_lidar: true
+        max_range: 100.0
+        resolution: 0.1
+        accuracy: 0.01
+        scan_frequency: 20
+      
+      camera:
+        rgb_camera_count: 4
+        depth_camera_count: 2
+        max_resolution: "1920x1080"
+        max_framerate: 30
+        has_stereo_vision: true
+      
+      imu:
+        dof: 9
+        sampling_rate: 400
+        gyro_range: 1000
+        accel_range: 8
+        has_magnetometer: true
+      
+      has_gps: true
+      has_encoders: true
+      has_force_sensors: true
+      has_temperature_sensors: true
+    
+    power_capabilities:
+      battery_capacity: 25000
+      operating_voltage: 48.0
+      charging_type: "contact"
+      charging_time_minutes: 180
+      estimated_runtime_hours: 2.5
+      supports_hot_swap: true
+      
+      has_power_monitoring: true
+      has_low_power_mode: true
+      has_hibernation_mode: true
+      can_estimate_remaining_time: true
+    
+    communication_capabilities:
+      supported_networks: ["wifi", "ethernet", "4g", "5g"]
+      supported_protocols: ["tcp", "udp", "websocket"]
+      has_bluetooth: true
+      has_remote_control: true
+      
+      default_rmw_implementation: "rmw_fastrtps_cpp"
+      supported_rmw: ["rmw_fastrtps_cpp", "rmw_cyclonedds_cpp"]
+      supports_multi_domain: true
+      
+      preferred_dds: "fastrtps"
+      max_participants: 200
+      supports_security: true
+    
+    processing_capabilities:
+      cpu_architecture: "x86_64"
+      cpu_cores: 8
+      ram_gb: 16
+      storage_gb: 256
+      has_gpu: true
+      
+      supports_tensorflow: true
+      supports_pytorch: true
+      supports_tensorrt: true
+      supports_openvino: false
+      
+      max_control_frequency: 1000.0
+      typical_latency_ms: 3.0
+    
+    physical_properties:
+      length: 1.1
+      width: 0.5
+      height: 0.84
+      weight: 32.5
+      max_payload: 14.0
+      
+      environmental:
+        min_temperature: -20
+        max_temperature: 45
+        ip_rating: 54
+        waterproof: false
+        dustproof: true
+      
+      mounting_points: ["back_mount", "front_mount", "side_mount"]
+
+  # =========================
+  # ANYmal机器人默认配置 (预留)
+  # =========================
+  anymal:
+    robot_type: 4
+    robot_model: "ANYmal C"
+    manufacturer: "ANYbotics"
+    
+    # ANYmal的基本默认配置
+    motion_capabilities:
+      max_linear_velocity: 1.0
+      max_angular_velocity: 1.5
+      max_acceleration: 1.5
+      turning_radius: 0.6
+      can_climb_stairs: true
+      can_balance_on_two_legs: false
+      locomotion_modes: ["walk", "trot", "static_walk"]
+      
+      quadruped_specific:
+        can_trot: true
+        can_bound: false
+        can_crawl: true
+        max_step_height: 0.25
+    
+    sensor_capabilities:
+      lidar:
+        has_2d_lidar: true
+        has_3d_lidar: true
+        max_range: 30.0
+        resolution: 0.25
+        accuracy: 0.02
+        scan_frequency: 15
+      
+      camera:
+        rgb_camera_count: 6
+        depth_camera_count: 2
+        max_resolution: "1280x720"
+        max_framerate: 60
+        has_stereo_vision: true
+      
+      imu:
+        dof: 6
+        sampling_rate: 200
+        gyro_range: 2000
+        accel_range: 16
+        has_magnetometer: false
+      
+      has_gps: true
+      has_encoders: true
+      has_force_sensors: true
+      has_temperature_sensors: true
+    
+    power_capabilities:
+      battery_capacity: 20000
+      operating_voltage: 48.0
+      charging_type: "contact"
+      charging_time_minutes: 150
+      estimated_runtime_hours: 3.0
+      supports_hot_swap: false
+      
+      has_power_monitoring: true
+      has_low_power_mode: true
+      has_hibernation_mode: false
+      can_estimate_remaining_time: true
+    
+    communication_capabilities:
+      supported_networks: ["wifi", "ethernet"]
+      supported_protocols: ["tcp", "udp"]
+      has_bluetooth: false
+      has_remote_control: true
+      
+      default_rmw_implementation: "rmw_fastrtps_cpp"
+      supported_rmw: ["rmw_fastrtps_cpp"]
+      supports_multi_domain: false
+      
+      preferred_dds: "fastrtps"
+      max_participants: 100
+      supports_security: false
+    
+    processing_capabilities:
+      cpu_architecture: "x86_64"
+      cpu_cores: 4
+      ram_gb: 8
+      storage_gb: 128
+      has_gpu: false
+      
+      supports_tensorflow: true
+      supports_pytorch: false
+      supports_tensorrt: false
+      supports_openvino: true
+      
+      max_control_frequency: 400.0
+      typical_latency_ms: 8.0
+    
+    physical_properties:
+      length: 0.85
+      width: 0.7
+      height: 0.65
+      weight: 50.0
+      max_payload: 10.0
+      
+      environmental:
+        min_temperature: -20
+        max_temperature: 60
+        ip_rating: 67
+        waterproof: true
+        dustproof: true
+      
+      mounting_points: ["top_mount", "payload_bay"]
+
+# 配置说明和使用指南
+usage_guide:
+  description: |
+    本配置文件定义了各种机器人类型的默认能力参数。
+    这些默认值用于以下场景：
+    1. 系统初始化时的后备配置
+    2. 新机器人类型的配置模板
+    3. 配置文件缺失或损坏时的替代方案
+    4. 开发和测试环境的标准配置
+  
+  configuration_hierarchy: |
+    配置加载优先级（从高到低）：
+    1. 用户自定义配置文件
+    2. 系统能力矩阵配置 (capability_matrix.yaml)
+    3. 本默认配置文件 (default_capabilities.yaml)
+    4. 代码中的硬编码默认值
+  
+  customization_guide: |
+    自定义配置建议：
+    1. 创建新的配置文件，而不是直接修改此默认文件
+    2. 只覆盖需要改变的参数，其余参数将使用默认值
+    3. 使用模板继承机制提高配置复用性
+    4. 定期验证配置文件的正确性和一致性
+  
+  parameter_explanation:
+    motion_capabilities: "机器人的运动能力参数，包括速度、加速度和特殊运动模式"
+    sensor_capabilities: "传感器配置，包括LiDAR、摄像头、IMU和其他传感器"
+    power_capabilities: "电源系统参数，包括电池容量、充电方式和电源管理特性"
+    communication_capabilities: "通信能力配置，包括网络协议和ROS2通信设置"
+    processing_capabilities: "计算能力参数，包括硬件规格和AI框架支持"
+    physical_properties: "物理属性，包括尺寸、重量和环境适应性"

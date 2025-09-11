@@ -1,0 +1,121 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <!-- ========== 包基本信息 ========== -->
+  <name>go2_adapter</name>
+  <version>1.0.0</version>
+  <description>
+    Go2机器人适配器包
+    
+    该包实现了Unitree Go2四足机器人的完整适配器，提供了统一的机器人操作接口。
+    主要功能包括：
+    - 运动控制：速度控制、姿态调整、步态切换、特殊动作
+    - 传感器接口：激光雷达、IMU、摄像头、关节状态、足部接触
+    - 状态监控：健康状态、运行模式、错误诊断、性能监控
+    - 电源管理：电池监控、无线充电、功耗优化、低电量保护
+    - 通信管理：DDS网络、消息路由、连接监控、故障恢复
+    
+    该适配器完全基于Go2官方ROS2接口实现，支持Go2的所有原生功能，
+    同时提供了统一的抽象接口，便于与其他机器人平台进行切换。
+  </description>
+  
+  <!-- ========== 维护者和许可证 ========== -->
+  <maintainer email="developer@example.com">Robot System Team</maintainer>
+  <license>MIT</license>
+  
+  <!-- ========== 构建工具依赖 ========== -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  
+  <!-- ========== 编译时依赖 ========== -->
+  <!-- ROS2核心依赖 -->
+  <build_depend>rclcpp</build_depend>
+  <build_depend>rclcpp_lifecycle</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <build_depend>nav_msgs</build_depend>
+  
+  <!-- 机器人统一接口依赖 -->
+  <build_depend>motion_interface</build_depend>
+  <build_depend>state_interface</build_depend>
+  <build_depend>power_interface</build_depend>
+  <build_depend>sensor_interface</build_depend>
+  <build_depend>adapter_factory</build_depend>
+  <build_depend>robot_detector</build_depend>
+  <build_depend>capability_manager</build_depend>
+  
+  <!-- Go2官方接口依赖 -->
+  <build_depend>unitree_api</build_depend>
+  <build_depend>unitree_go</build_depend>
+  
+  <!-- DDS通信依赖 -->
+  <build_depend>cyclonedds</build_depend>
+  <build_depend>rmw_cyclonedds_cpp</build_depend>
+  
+  <!-- 第三方库依赖 -->
+  <build_depend>jsoncpp</build_depend>          <!-- JSON数据处理 -->
+  <build_depend>eigen3</build_depend>           <!-- 数学运算库 -->
+  <build_depend>tf2</build_depend>              <!-- 坐标变换 -->
+  <build_depend>tf2_ros</build_depend>          <!-- ROS坐标变换 -->
+  <build_depend>tf2_geometry_msgs</build_depend> <!-- 几何消息变换 -->
+  
+  <!-- ========== 运行时依赖 ========== -->
+  <!-- ROS2核心运行时依赖 -->
+  <exec_depend>rclcpp</exec_depend>
+  <exec_depend>rclcpp_lifecycle</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  
+  <!-- 机器人统一接口运行时依赖 -->
+  <exec_depend>motion_interface</exec_depend>
+  <exec_depend>state_interface</exec_depend>
+  <exec_depend>power_interface</exec_depend>
+  <exec_depend>sensor_interface</exec_depend>
+  <exec_depend>adapter_factory</exec_depend>
+  <exec_depend>robot_detector</exec_depend>
+  <exec_depend>capability_manager</exec_depend>
+  
+  <!-- Go2官方接口运行时依赖 -->
+  <exec_depend>unitree_api</exec_depend>
+  <exec_depend>unitree_go</exec_depend>
+  
+  <!-- DDS通信运行时依赖 -->
+  <exec_depend>cyclonedds</exec_depend>
+  <exec_depend>rmw_cyclonedds_cpp</exec_depend>
+  
+  <!-- 第三方库运行时依赖 -->
+  <exec_depend>jsoncpp</exec_depend>
+  <exec_depend>eigen3</exec_depend>
+  <exec_depend>tf2</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>tf2_geometry_msgs</exec_depend>
+  
+  <!-- ========== 测试依赖 ========== -->
+  <test_depend>ament_lint_auto</test_depend>      <!-- 代码风格检查 -->
+  <test_depend>ament_lint_common</test_depend>    <!-- 通用代码检查 -->
+  <test_depend>ament_cmake_gtest</test_depend>    <!-- 单元测试框架 -->
+  <test_depend>ament_cmake_gmock</test_depend>    <!-- Mock测试框架 -->
+  
+  <!-- Go2适配器特定测试依赖 -->
+  <test_depend>launch</test_depend>               <!-- 启动文件测试 -->
+  <test_depend>launch_ros</test_depend>           <!-- ROS启动测试 -->
+  <test_depend>launch_testing</test_depend>       <!-- 集成测试 -->
+  
+  <!-- ========== 导出信息 ========== -->
+  <export>
+    <build_type>ament_cmake</build_type>
+    
+    <!-- 导出包含目录供其他包使用 -->
+    <ament_cmake>
+      <!-- 导出Go2适配器头文件 -->
+      <environment_hooks>env-hooks/go2_adapter.sh</environment_hooks>
+    </ament_cmake>
+    
+    <!-- 插件导出信息 -->
+    <robot_factory>
+      <plugin_description>plugins/go2_adapter_plugins.xml</plugin_description>
+    </robot_factory>
+  </export>
+</package>
