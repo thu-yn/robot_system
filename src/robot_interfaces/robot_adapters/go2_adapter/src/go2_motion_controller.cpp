@@ -1,6 +1,8 @@
 /**
- * @file go2_motion_controller.cpp
- * @brief Go2机器人运动控制器完整实现
+ * @file   go2_motion_controller.cpp
+ * @brief  Go2机器人运动控制器完整实现
+ * @author Yang Nan
+ * @date   2025-09-15
  *
  * 本文件实现了Go2机器人的运动控制功能，包括：
  * - 统一运动接口的完整实现

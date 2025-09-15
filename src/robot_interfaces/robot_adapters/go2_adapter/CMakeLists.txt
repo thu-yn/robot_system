@@ -83,6 +83,12 @@ target_include_directories(go2_motion_controller PUBLIC
 )
 ament_target_dependencies(go2_motion_controller ${DEPENDENCIES})
 
+# 运动控制器内部依赖通信与消息转换库（保持plain签名，避免与ament_target_dependencies冲突）
+target_link_libraries(go2_motion_controller
+  go2_communication
+  go2_message_converter
+)
+
 # 暂时注释掉JSON库链接，后续需要时再启用
 # if(JSONCPP_FOUND)
 #   target_link_libraries(go2_motion_controller ${JSONCPP_LIBRARIES})
@@ -100,6 +106,11 @@ target_include_directories(go2_sensor_interface PUBLIC
 )
 ament_target_dependencies(go2_sensor_interface ${DEPENDENCIES})
 
+target_link_libraries(go2_sensor_interface
+  go2_communication
+  go2_message_converter
+)
+
 # Go2状态监控器库
 add_library(go2_state_monitor
   src/go2_state_monitor.cpp
@@ -110,6 +121,11 @@ target_include_directories(go2_state_monitor PUBLIC
 )
 ament_target_dependencies(go2_state_monitor ${DEPENDENCIES})
 
+target_link_libraries(go2_state_monitor
+  go2_communication
+  go2_message_converter
+)
+
 # Go2电源管理器库
 add_library(go2_power_manager
   src/go2_power_manager.cpp
@@ -119,6 +135,11 @@ target_include_directories(go2_power_manager PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 ament_target_dependencies(go2_power_manager ${DEPENDENCIES})
+
+target_link_libraries(go2_power_manager
+  go2_communication
+  go2_message_converter
+)
 
 # Go2通信管理器库
 add_library(go2_communication
@@ -197,6 +218,28 @@ target_include_directories(go2_communication_test PUBLIC
 ament_target_dependencies(go2_communication_test ${DEPENDENCIES})
 target_link_libraries(go2_communication_test go2_communication)
 
+# Go2消息转换功能验证示例
+add_executable(go2_message_converter_test
+  examples/test_go2_message_converter.cpp
+)
+target_include_directories(go2_message_converter_test PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(go2_message_converter_test ${DEPENDENCIES})
+target_link_libraries(go2_message_converter_test go2_message_converter)
+
+# Go2运动控制功能验证示例
+add_executable(go2_motion_controller_test
+  examples/test_go2_motion_controller.cpp
+)
+target_include_directories(go2_motion_controller_test PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(go2_motion_controller_test ${DEPENDENCIES})
+target_link_libraries(go2_motion_controller_test go2_motion_controller)
+
 # ========== 单元测试构建 ==========
 # 暂时禁用测试以完成基本构建
 # if(BUILD_TESTING)
@@ -257,6 +300,8 @@ install(TARGETS
 install(TARGETS
   go2_adapter_node
   go2_communication_test
+  go2_message_converter_test
+  go2_motion_controller_test
   DESTINATION lib/${PROJECT_NAME}
 )
 

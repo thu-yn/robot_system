@@ -792,6 +792,57 @@ ConversionResult Go2MessageConverter::convertToOdometry(
     }
 }
 
+// 反向转换：ROS Odometry -> Go2 SportModeState (部分字段)
+ConversionResult Go2MessageConverter::convertOdometryToSportMode(
+    const nav_msgs::msg::Odometry& odometry,
+    unitree_go::msg::SportModeState& go2_state) const {
+
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    try {
+        // 时间戳
+        go2_state.stamp.sec = static_cast<uint32_t>(odometry.header.stamp.sec);
+        go2_state.stamp.nanosec = static_cast<uint32_t>(odometry.header.stamp.nanosec);
+
+        // 位置信息
+        go2_state.position[0] = static_cast<float>(odometry.pose.pose.position.x);
+        go2_state.position[1] = static_cast<float>(odometry.pose.pose.position.y);
+        go2_state.position[2] = static_cast<float>(odometry.pose.pose.position.z);
+
+        // 四元数 (ROS: x,y,z,w) -> (Go2: w,x,y,z)
+        go2_state.imu_state.quaternion[0] = static_cast<float>(odometry.pose.pose.orientation.w);
+        go2_state.imu_state.quaternion[1] = static_cast<float>(odometry.pose.pose.orientation.x);
+        go2_state.imu_state.quaternion[2] = static_cast<float>(odometry.pose.pose.orientation.y);
+        go2_state.imu_state.quaternion[3] = static_cast<float>(odometry.pose.pose.orientation.z);
+
+        // 线速度
+        go2_state.velocity[0] = static_cast<float>(odometry.twist.twist.linear.x);
+        go2_state.velocity[1] = static_cast<float>(odometry.twist.twist.linear.y);
+        go2_state.velocity[2] = static_cast<float>(odometry.twist.twist.linear.z);
+
+        // 角速度：IMU陀螺仪 x/y；偏航角速度单独存储为 yaw_speed
+        go2_state.imu_state.gyroscope[0] = static_cast<float>(odometry.twist.twist.angular.x);
+        go2_state.imu_state.gyroscope[1] = static_cast<float>(odometry.twist.twist.angular.y);
+        go2_state.imu_state.gyroscope[2] = static_cast<float>(odometry.twist.twist.angular.z);
+        go2_state.yaw_speed = static_cast<float>(odometry.twist.twist.angular.z);
+
+        // 其他字段保持默认值（如 body_height、foot_force 等），不在该转换中设置
+
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+        recordConversion("OdometryToSportMode", true, duration.count() / 1000.0);
+
+        return ConversionResult::SUCCESS;
+
+    } catch (const std::exception& e) {
+        setError("Odometry转SportModeState失败: " + std::string(e.what()));
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+        recordConversion("OdometryToSportMode", false, duration.count() / 1000.0);
+        return ConversionResult::CONVERSION_ERROR;
+    }
+}
+
 // ============= 电池状态转换函数实现 =============
 
 ConversionResult Go2MessageConverter::convertBatteryToRos(
@@ -1559,6 +1610,11 @@ std::vector<std::string> Go2MessageConverter::getSupportedMessageTypes() const {
 
 bool Go2MessageConverter::validateRange(float value, float min_val, float max_val, 
                                        const std::string& field_name) const {
+    // 先处理特殊数值：NaN 或 无穷大应视为无效
+    if (!std::isfinite(value)) {
+        setError("字段 " + field_name + " 值 非有限数值(NaN/Inf)");
+        return false;
+    }
     if (value < min_val || value > max_val) {
         setError("字段 " + field_name + " 值 " + std::to_string(value) + 
                 " 超出范围 [" + std::to_string(min_val) + ", " + 

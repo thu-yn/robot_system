@@ -1,7 +1,7 @@
 /**
  * @file   test_go2_communication.cpp
  * @brief  Go2Communication类功能验证测试程序
- * @author Claude Assistant
+ * @author Yang Nan
  * @date   2025-09-15
  *
  * @details
@@ -116,7 +116,6 @@ public:
         std::cout << "0. 运行所有测试" << std::endl;
         std::cout << "q. 退出程序" << std::endl;
         std::cout << std::string(60, '-') << std::endl;
-        std::cout << "提示：按 Ctrl+C 可随时停止程序" << std::endl;
         std::cout << "请输入选择: ";
     }
 
