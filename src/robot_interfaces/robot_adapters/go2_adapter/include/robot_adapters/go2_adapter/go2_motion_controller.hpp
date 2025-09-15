@@ -1,7 +1,7 @@
-#pragma once
+#ifndef ROBOT_ADAPTERS__GO2_ADAPTER__GO2_MOTION_CONTROLLER_HPP_
+#define ROBOT_ADAPTERS__GO2_ADAPTER__GO2_MOTION_CONTROLLER_HPP_
 
 #include <rclcpp/rclcpp.hpp>
-#include <memory>
 #include <string>
 #include <chrono>
 #include <functional>
@@ -16,7 +16,15 @@
 
 // Go2特定消息类型
 #include "unitree_api/msg/request.hpp"
+#include "unitree_api/msg/response.hpp"
 #include "unitree_go/msg/sport_mode_state.hpp"
+
+// Go2适配器相关组件
+#include "robot_adapters/go2_adapter/go2_communication.hpp"
+#include "robot_adapters/go2_adapter/go2_message_converter.hpp"
+
+// JSON处理库
+#include <nlohmann/json.hpp>
 
 namespace robot_adapters {
 namespace go2_adapter {
@@ -27,12 +35,12 @@ namespace go2_adapter {
  * 
  * 该类实现了统一运动控制接口，专门用于控制宇树Go2四足机器人
  * 功能包括：
- * - 基础运动控制（速度、姿态、高度调节）
- * - 运动模式切换（站立、移动、趴下等）
- * - 步态控制（小跑、奔跑、爬楼梯等）
- * - Go2特有动作（舞蹈、翻滚、跳跃等）
- * - 紧急停止和安全保护
- * - 实时状态监控和反馈
+ *      - 基础运动控制（速度、姿态、高度调节）
+ *      - 运动模式切换（站立、移动、趴下等）
+ *      - 步态控制（小跑、奔跑、爬楼梯等）
+ *      - Go2特有动作（舞蹈、翻滚、跳跃等）
+ *      - 紧急停止和安全保护
+ *      - 实时状态监控和反馈
  */
 class Go2MotionController : public robot_base_interfaces::motion_interface::IMotionController,
                             public rclcpp::Node {
@@ -184,7 +192,7 @@ public:
     robot_base_interfaces::motion_interface::MotionResult recoveryStand() override;
     
     // ============= Go2特有高级功能 =============
-    
+    // TODO:由于i_quadruped_tricks.hpp中专门实现了特有高级功能，建议迁移至该类方法下进行实现。
     /**
      * @brief 执行舞蹈动作 (Go2 API: 1018-1020)
      * @param dance_type 舞蹈类型 (1=Dance1, 2=Dance2)
@@ -297,7 +305,18 @@ private:
     
     /** @brief ROS2 Twist命令发布器，用于标准速度控制 */
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
-    
+
+    /** @brief API响应订阅器，用于接收Go2命令执行结果 */
+    rclcpp::Subscription<unitree_api::msg::Response>::SharedPtr api_response_sub_;
+
+    // ============= Go2组件 =============
+
+    /** @brief Go2通信管理器 */
+    std::shared_ptr<Go2Communication> go2_communication_;
+
+    /** @brief Go2消息转换器 */
+    std::shared_ptr<Go2MessageConverter> go2_converter_;
+
     // ============= 回调函数存储 =============
     
     /** @brief 状态变化回调函数 */
@@ -326,17 +345,29 @@ private:
     void sportModeStateCallback(const unitree_go::msg::SportModeState::SharedPtr msg);
     
     /**
-     * @brief 发送Go2 API命令
+     * @brief 发送Go2 API命令（基于SportClient模式）
      * @param api_id Go2 API命令ID
-     * @param parameter 命令参数
+     * @param json_params JSON格式的参数
      * @return bool 发送成功返回true
-     * 
+     *
      * 封装Go2 API请求的发送过程，包括：
      * - 构造unitree_api::msg::Request消息
-     * - 设置命令ID和参数
+     * - 设置正确的请求头信息
+     * - 使用JSON格式参数
      * - 发布到Go2 API话题
      */
-    bool sendGo2Command(uint32_t api_id, const std::string& parameter = "");
+    bool sendGo2ApiCommand(uint32_t api_id, const nlohmann::json& json_params = nlohmann::json{});
+
+    /**
+     * @brief API响应回调函数
+     * @param msg 接收到的API响应消息
+     *
+     * 处理Go2机器人的API命令执行结果：
+     * - 检查命令执行状态
+     * - 处理错误代码
+     * - 触发相应的错误回调
+     */
+    void apiResponseCallback(const unitree_api::msg::Response::SharedPtr msg);
     
     /**
      * @brief 发送速度控制命令
@@ -393,34 +424,49 @@ private:
     void triggerErrorCallback(uint32_t error_code, const std::string& error_msg);
     
     // ============= Go2专用常量定义 =============
-    
+
     /** @brief Go2最大线速度 (m/s) */
     static constexpr float MAX_LINEAR_VELOCITY = 1.5f;
-    
+
     /** @brief Go2最大角速度 (rad/s) */
     static constexpr float MAX_ANGULAR_VELOCITY = 2.0f;
-    
+
     /** @brief Go2最大侧移速度 (m/s) */
     static constexpr float MAX_LATERAL_VELOCITY = 0.8f;
-    
+
     /** @brief Go2最大滚转角 (rad) */
     static constexpr float MAX_ROLL_ANGLE = 0.4f;
-    
+
     /** @brief Go2最大俯仰角 (rad) */
     static constexpr float MAX_PITCH_ANGLE = 0.4f;
-    
+
     /** @brief Go2最小机身高度 (m) */
     static constexpr float MIN_BODY_HEIGHT = 0.08f;
-    
+
     /** @brief Go2最大机身高度 (m) */
     static constexpr float MAX_BODY_HEIGHT = 0.42f;
-    
+
     /** @brief Go2默认机身高度 (m) */
     static constexpr float DEFAULT_BODY_HEIGHT = 0.32f;
-    
+
     /** @brief 命令超时时间 (毫秒) */
     static constexpr int COMMAND_TIMEOUT_MS = 5000;
+
+    // ============= Go2基本控制API ID常量（基于通信指南） =============
+
+    static constexpr uint32_t API_ID_DAMP = 1001;               // 阻尼模式
+    static constexpr uint32_t API_ID_BALANCE_STAND = 1002;      // 平衡站立
+    static constexpr uint32_t API_ID_STOP_MOVE = 1003;          // 停止移动
+    static constexpr uint32_t API_ID_STAND_UP = 1004;           // 站起
+    static constexpr uint32_t API_ID_STAND_DOWN = 1005;         // 趴下
+    static constexpr uint32_t API_ID_RECOVERY_STAND = 1006;     // 恢复站立
+    static constexpr uint32_t API_ID_EULER = 1007;              // 欧拉角控制
+    static constexpr uint32_t API_ID_MOVE = 1008;               // 运动控制
+    static constexpr uint32_t API_ID_SIT = 1009;                // 坐下
+    static constexpr uint32_t API_ID_RISE_SIT = 1010;           // 从坐姿起立
+    static constexpr uint32_t API_ID_SPEED_LEVEL = 1015;        // 速度等级设置
 };
 
 } // namespace go2_adapter
 } // namespace robot_adapters
+#endif //ROBOT_ADAPTERS__GO2_ADAPTER__GO2_MOTION_CONTROLLER_HPP_

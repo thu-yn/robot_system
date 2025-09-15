@@ -1,18 +1,19 @@
 /**
- * @file go2_message_converter.hpp
- * @brief Go2机器人消息转换器
- * @author Claude Code
- * @date 2024
+ * @file   go2_message_converter.hpp
+ * @brief  Go2机器人消息转换器
+ * @author Yang nan
+ * @date   2025-09-11
  * 
  * 负责Go2原生消息格式与统一接口消息格式之间的转换：
- * - Go2 SportModeState <-> 统一 MotionState
- * - Go2 LowState <-> 统一 DetailedRobotState
- * - Go2 BmsState <-> 统一 BatteryInfo
- * - Go2 WirelessController <-> 统一控制输入
- * - 标准ROS消息与Go2原生消息的转换
+ *      - Go2 SportModeState <-> 统一 MotionState
+ *      - Go2 LowState <-> 统一 DetailedRobotState
+ *      - Go2 BmsState <-> 统一 BatteryInfo
+ *      - Go2 WirelessController <-> 统一控制输入
+ *      - 标准ROS消息与Go2原生消息的转换
  */
 
-#pragma once
+#ifndef ROBOT_ADAPTERS__GO2_ADAPTER__GO2_MESSAGE_CONVERTER_HPP_
+#define ROBOT_ADAPTERS__GO2_ADAPTER__GO2_MESSAGE_CONVERTER_HPP_
 
 #include <memory>
 #include <string>
@@ -29,6 +30,7 @@
 #include "unitree_go/msg/bms_state.hpp"
 #include "unitree_go/msg/wireless_controller.hpp"
 #include "unitree_api/msg/request.hpp"
+#include "unitree_api/msg/response.hpp"
 
 // 标准ROS2消息类型
 #include <geometry_msgs/msg/twist.hpp>
@@ -51,26 +53,26 @@ namespace go2_adapter {
  * @brief 消息转换结果枚举
  */
 enum class ConversionResult {
-    SUCCESS = 0,            ///< 转换成功
-    INVALID_INPUT = 1,      ///< 输入无效
+    SUCCESS          = 0,   ///< 转换成功
+    INVALID_INPUT    = 1,   ///< 输入无效
     CONVERSION_ERROR = 2,   ///< 转换错误
     UNSUPPORTED_TYPE = 3,   ///< 不支持的类型
-    DATA_INCOMPLETE = 4     ///< 数据不完整
+    DATA_INCOMPLETE  = 4    ///< 数据不完整
 };
 
 /**
  * @brief 转换选项结构体
  */
 struct ConversionOptions {
-    bool validate_ranges = true;        ///< 是否验证数值范围
-    bool fill_missing_data = true;      ///< 是否填充缺失数据
+    bool validate_ranges     = true;    ///< 是否验证数值范围
+    bool fill_missing_data   = true;    ///< 是否填充缺失数据
     bool preserve_timestamps = true;    ///< 是否保持时间戳
-    float default_timeout_s = 1.0f;     ///< 默认超时时间(秒)
+    float default_timeout_s  = 1.0f;    ///< 默认超时时间(秒)
     
     // Go2特定选项
     bool use_go2_coordinate_frame = true;   ///< 使用Go2坐标系
-    bool enable_go2_extensions = true;      ///< 启用Go2扩展功能
-    bool strict_validation = false;         ///< 严格验证模式
+    bool enable_go2_extensions    = true;   ///< 启用Go2扩展功能
+    bool strict_validation        = false;  ///< 严格验证模式
 };
 
 /**
@@ -189,6 +191,16 @@ public:
     ConversionResult convertFootInfo(
         const std::array<int16_t, 4>& go2_foot_forces,
         std::vector<robot_base_interfaces::state_interface::FootInfo>& unified_feet) const;
+    
+    /**
+     * @brief 转换IMU信息
+     * @param go2_imu_state Go2 IMU状态
+     * @param unified_imu 统一IMU信息（输出）
+     * @return 转换结果
+     */
+    ConversionResult convertIMUInfo(
+        const unitree_go::msg::IMUState& go2_imu_state,
+        decltype(robot_base_interfaces::state_interface::DetailedRobotState{}.imu)& unified_imu) const;
 
     // ============= 电源状态转换 =============
     
@@ -218,8 +230,30 @@ public:
     robot_base_interfaces::power_interface::ChargingState 
     convertChargingState(uint8_t go2_charging_status) const;
 
+    // ============= 遥控器状态转换 =============
+
+    /**
+     * @brief Go2 WirelessController -> 统一遥控器状态
+     * @param go2_controller Go2遥控器状态
+     * @param unified_controller 统一遥控器状态（输出）
+     * @return 转换结果
+     */
+    ConversionResult convertWirelessController(
+        const unitree_go::msg::WirelessController& go2_controller,
+        decltype(robot_base_interfaces::state_interface::DetailedRobotState{}.wireless_controller)& unified_controller) const;
+
+    /**
+     * @brief 统一遥控器状态 -> ROS Twist
+     * @param unified_controller 统一遥控器状态
+     * @param twist ROS Twist消息（输出）
+     * @return 转换结果
+     */
+    ConversionResult convertControllerToTwist(
+        const decltype(robot_base_interfaces::state_interface::DetailedRobotState{}.wireless_controller)& unified_controller,
+        geometry_msgs::msg::Twist& twist) const;
+
     // ============= 传感器数据转换 =============
-    
+
     /**
      * @brief Go2 IMU数据转换
      * @param go2_imu Go2 IMU数据
@@ -229,7 +263,17 @@ public:
     ConversionResult convertImuData(
         const std::vector<float>& go2_imu,
         sensor_msgs::msg::Imu& ros_imu) const;
-    
+
+    /**
+     * @brief ROS IMU消息转换为统一格式
+     * @param ros_imu ROS IMU消息
+     * @param unified_imu 统一格式IMU数据（输出）
+     * @return 转换结果
+     */
+    ConversionResult convertRosImuToUnified(
+        const sensor_msgs::msg::Imu& ros_imu,
+        robot_base_interfaces::sensor_interface::IMUData& unified_imu) const;
+
     /**
      * @brief 点云数据增强处理
      * @param pointcloud 原始点云
@@ -239,6 +283,84 @@ public:
     ConversionResult enhancePointCloudData(
         const sensor_msgs::msg::PointCloud2& pointcloud,
         robot_base_interfaces::sensor_interface::PointCloudData& enhanced_info) const;
+
+    // ============= 里程计转换 =============
+
+    /**
+     * @brief Go2状态 -> ROS里程计消息
+     * @param go2_state Go2运动状态
+     * @param odometry ROS里程计消息（输出）
+     * @return 转换结果
+     */
+    ConversionResult convertToOdometry(
+        const unitree_go::msg::SportModeState& go2_state,
+        nav_msgs::msg::Odometry& odometry) const;
+
+    // ============= 电池状态转换 =============
+
+    /**
+     * @brief Go2电池状态 -> ROS电池消息 (预留接口)
+     * @param go2_bms Go2电池管理状态
+     * @param battery_msg ROS电池消息（输出）
+     * @return 转换结果
+     */
+    ConversionResult convertBatteryToRos(
+        const unitree_go::msg::BmsState& go2_bms,
+        std::map<std::string, float>& battery_msg) const;
+
+    // ============= API响应解析 =============
+
+    /**
+     * @brief 解析Go2 API响应消息
+     * @param response Go2 API响应
+     * @param result_info 解析结果信息（输出）
+     * @return 转换结果
+     */
+    ConversionResult parseApiResponse(
+        const unitree_api::msg::Response& response,
+        std::map<std::string, std::string>& result_info) const;
+
+    // ============= 反向转换 (统一格式 -> Go2) =============
+
+    /**
+     * @brief 统一BatteryInfo -> Go2 BmsState (部分字段)
+     * @param unified_battery 统一电池信息
+     * @param go2_bms Go2电池状态（输出）
+     * @return 转换结果
+     */
+    ConversionResult convertBatteryInfoToBms(
+        const robot_base_interfaces::power_interface::BatteryInfo& unified_battery,
+        unitree_go::msg::BmsState& go2_bms) const;
+
+    /**
+     * @brief 统一DetailedRobotState -> Go2 LowState (部分字段)
+     * @param unified_state 统一详细状态
+     * @param go2_low_state Go2低级状态（输出）
+     * @return 转换结果
+     */
+    ConversionResult convertDetailedStateToLowState(
+        const robot_base_interfaces::state_interface::DetailedRobotState& unified_state,
+        unitree_go::msg::LowState& go2_low_state) const;
+
+    /**
+     * @brief ROS Odometry -> Go2 SportModeState (部分字段)
+     * @param odometry ROS里程计消息
+     * @param go2_state Go2运动状态（输出）
+     * @return 转换结果
+     */
+    ConversionResult convertOdometryToSportMode(
+        const nav_msgs::msg::Odometry& odometry,
+        unitree_go::msg::SportModeState& go2_state) const;
+
+    /**
+     * @brief ROS Imu -> Go2 IMUState
+     * @param ros_imu ROS IMU消息
+     * @param go2_imu Go2 IMU状态（输出）
+     * @return 转换结果
+     */
+    ConversionResult convertRosImuToGo2(
+        const sensor_msgs::msg::Imu& ros_imu,
+        unitree_go::msg::IMUState& go2_imu) const;
 
     // ============= 控制命令转换 =============
     
@@ -271,6 +393,17 @@ public:
     ConversionResult convertTwistToGo2Velocity(
         const geometry_msgs::msg::Twist& twist,
         std::vector<float>& go2_velocity) const;
+
+    /**
+     * @brief ROS Twist -> Go2 API Request (直接转换)
+     * @param twist ROS Twist消息
+     * @param go2_request Go2 API请求（输出）
+     * @return 转换结果
+     * @details 这是一个便利函数，直接将Twist转换为可发送的Go2 API请求
+     */
+    ConversionResult convertTwistToApiRequest(
+        const geometry_msgs::msg::Twist& twist,
+        unitree_api::msg::Request& go2_request) const;
 
     // ============= 坐标系转换 =============
     
@@ -419,9 +552,9 @@ private:
     
     // 统计信息
     struct ConversionStats {
-        uint64_t total_conversions = 0;             ///< 总转换次数
-        uint64_t successful_conversions = 0;        ///< 成功转换次数
-        uint64_t failed_conversions = 0;            ///< 失败转换次数
+        uint64_t total_conversions      = 0;    ///< 总转换次数
+        uint64_t successful_conversions = 0;    ///< 成功转换次数
+        uint64_t failed_conversions     = 0;    ///< 失败转换次数
         
         // 按消息类型统计
         std::map<std::string, uint64_t> type_counts;
@@ -429,8 +562,8 @@ private:
         
         // 性能统计
         double total_conversion_time_ms = 0.0;      ///< 总转换时间
-        double max_conversion_time_ms = 0.0;        ///< 最长转换时间
-        double min_conversion_time_ms = 999999.0;   ///< 最短转换时间
+        double max_conversion_time_ms   = 0.0;      ///< 最长转换时间
+        double min_conversion_time_ms   = 999999.0; ///< 最短转换时间
     } mutable stats_;
     
     // 坐标系变换矩阵
@@ -440,10 +573,10 @@ private:
     } transforms_;
     
     // 常量映射表
-    std::map<uint8_t, robot_base_interfaces::motion_interface::MotionMode> motion_mode_map_;
-    std::map<uint8_t, robot_base_interfaces::motion_interface::GaitType> gait_type_map_;
+    std::map<uint8_t,  robot_base_interfaces::motion_interface::MotionMode>   motion_mode_map_;
+    std::map<uint8_t,  robot_base_interfaces::motion_interface::GaitType>     gait_type_map_;
     std::map<uint32_t, robot_base_interfaces::power_interface::BatteryHealth> battery_health_map_;
-    std::map<uint8_t, robot_base_interfaces::power_interface::ChargingState> charging_state_map_;
+    std::map<uint8_t,  robot_base_interfaces::power_interface::ChargingState> charging_state_map_;
 
     // ============= 私有方法 =============
     
@@ -579,3 +712,4 @@ To Go2MessageConverter::safeCast(const From& value, To default_value) const {
 
 } // namespace go2_adapter
 } // namespace robot_adapters
+#endif //ROBOT_ADAPTERS__GO2_ADAPTER__GO2_MESSAGE_CONVERTER_HPP_

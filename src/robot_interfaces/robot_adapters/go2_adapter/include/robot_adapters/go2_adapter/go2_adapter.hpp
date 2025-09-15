@@ -2,27 +2,27 @@
  * @file   go2_adapter.hpp
  * @brief  Go2机器人适配器主类头文件 - 定义了Go2Adapter类的结构和接口
  * @author Yang nan
- * @date   2025-09-11
+ * @date   2025-09-12
  * 
  * @details
  * 该文件定义了`Go2Adapter`类，它是连接上层通用机器人系统与Unitree Go2机器人底层接口的核心桥梁。
  * 它继承自`rclcpp::Node`，因此本身就是一个ROS2节点，能够创建发布者、订阅者、服务等。
  * 该类通过组合持有运动控制、传感器、状态监控和电源管理等具体实现模块的实例，
  * 并将它们封装在统一的`IRobotAdapter`接口之后，实现了对上层应用的透明化。
- * 作为Go2机器人与统一接口层之间的桥梁，封装了：                                                                │
- *      - 运动控制接口 (IMotionController)                                                                           │
- *      - 传感器接口 (ISensorInterface)                                                                              │
- *      - 状态监控接口 (IStateMonitor)                                                                               │
+ * 作为Go2机器人与统一接口层之间的桥梁，封装了：                                           
+ *      - 运动控制接口 (IMotionController)                                                     
+ *      - 传感器接口 (ISensorInterface)                                                  
+ *      - 状态监控接口 (IStateMonitor)                                                            
  *      - 电源管理接口 (IPowerManager)
- * 使用方式：                                                                                                   │
- *      1. 创建适配器实例                                                                                            │
- *      2. 调用initialize()初始化                                                                                    │
- *      3. 通过get*Interface()获取具体接口进行操作                                                                   │
+ * 使用方式：                                                                                  
+ *      1. 创建适配器实例                                                                         
+ *      2. 调用initialize()初始化                                                                    
+ *      3. 通过get*Interface()获取具体接口进行操作                                                                
  *      4. 使用完毕后调用shutdown()清理资源  
  */
 
- #ifndef ROBOT_ADAPTERS__GO2_ADAPTER__GO2_ADAPTER_HPP_
- #define ROBOT_ADAPTERS__GO2_ADAPTER__GO2_ADAPTER_HPP_
+#ifndef ROBOT_ADAPTERS__GO2_ADAPTER__GO2_ADAPTER_HPP_
+#define ROBOT_ADAPTERS__GO2_ADAPTER__GO2_ADAPTER_HPP_
 
 #include <rclcpp/rclcpp.hpp>        // ROS2 C++客户端核心库
 #include <std_srvs/srv/trigger.hpp> // ROS2标准服务类型，常用于触发简单操作
@@ -40,6 +40,7 @@
 #include "robot_base_interfaces/sensor_interface/i_sensor_interface.hpp"  // 传感器模块的抽象接口
 #include "robot_base_interfaces/state_interface/i_state_monitor.hpp"      // 状态监控模块的抽象接口
 #include "robot_base_interfaces/power_interface/i_power_manager.hpp"      // 电源管理模块的抽象接口
+#include "robot_factory/adapter_factory/i_robot_adapter.hpp"              // 统一机器人适配器接口
 
 // Go2具体实现
 #include "go2_motion_controller.hpp"   // Go2运动控制的具体实现
@@ -64,9 +65,11 @@ namespace go2_adapter {
  * 4. **提供ROS接口**：通过ROS2服务和话题，向外部暴露控制和监控的能力。
  * 
  * @note
- * 该类继承自 `rclcpp::Node`，使其具备完整的ROS2节点功能。
+ * 该类同时继承自 `rclcpp::Node` 和 `IRobotAdapter`，使其既具备完整的ROS2节点功能，
+ * 又实现了统一的机器人适配器接口。
  */
-class Go2Adapter : public rclcpp::Node {
+class Go2Adapter : public robot_factory::adapter_factory::IRobotAdapter,
+                   public rclcpp::Node {
 public:
     /**
      * @brief 构造函数
@@ -96,7 +99,7 @@ public:
      *      - 设置心跳定时器和ROS服务
      * @return 如果所有步骤都成功，则返回true；否则返回false。
      */
-    bool initialize();
+    bool initialize() override;
     
     /**
      * @brief 关闭适配器，安全地释放所有资源。
@@ -104,21 +107,22 @@ public:
      *      - 停止心跳定时器
      *      - 关闭所有ROS接口
      *      - 依次关闭所有子模块
+     * @return 如果关闭成功返回true，否则返回false。
      */
-    void shutdown();
+    bool shutdown() override;
     
     /**
      * @brief 检查适配器是否已成功初始化。
      * @return 如果initialize()已成功调用，返回true。
      */
-    bool isInitialized() const { return is_initialized_; }
+    bool isInitialized() const override { return is_initialized_; }
     
     /**
      * @brief 检查适配器当前是否处于可操作状态。
      * @details 可操作意味着已初始化且与机器人的通信正常。
      * @return 如果适配器可正常工作，返回true。
      */
-    bool isOperational() const;
+    bool isOperational() const override;
 
     // ============= 接口访问器 (Interface Accessors) =============
     
@@ -127,28 +131,95 @@ public:
      * @return 指向`IMotionController`接口的共享指针。如果模块未初始化，可能返回nullptr。
      */
     std::shared_ptr<robot_base_interfaces::motion_interface::IMotionController>
-    getMotionController() const { return motion_controller_; }
+    getMotionController() override { return motion_controller_; }
     
     /**
      * @brief 获取传感器模块的接口。
      * @return 指向`ISensorInterface`接口的共享指针。
      */
     std::shared_ptr<robot_base_interfaces::sensor_interface::ISensorInterface>
-    getSensorInterface() const { return sensor_interface_; }
+    getSensorInterface() override { return sensor_interface_; }
     
     /**
      * @brief 获取状态监控模块的接口。
      * @return 指向`IStateMonitor`接口的共享指针。
      */
     std::shared_ptr<robot_base_interfaces::state_interface::IStateMonitor>
-    getStateMonitor() const { return state_monitor_; }
+    getStateMonitor() override { return state_monitor_; }
     
     /**
      * @brief 获取电源管理模块的接口。
      * @return 指向`IPowerManager`接口的共享指针。
      */
     std::shared_ptr<robot_base_interfaces::power_interface::IPowerManager>
-    getPowerManager() const { return power_manager_; }
+    getPowerManager() override { return power_manager_; }
+
+    // ============= 机器人信息 (Robot Information) =============
+    
+    /**
+     * @brief 获取机器人类型
+     * @return 机器人类型
+     */
+    robot_base_interfaces::motion_interface::RobotType getRobotType() const override {
+        return robot_base_interfaces::motion_interface::RobotType::GO2;
+    }
+    
+    /**
+     * @brief 获取机器人名称
+     * @return 机器人名称字符串
+     */
+    std::string getRobotName() const override { return "Go2"; }
+    
+    /**
+     * @brief 获取机器人型号
+     * @return 机器人型号字符串
+     */
+    std::string getRobotModel() const override { return "Unitree Go2"; }
+    
+    /**
+     * @brief 获取适配器版本
+     * @return 版本字符串
+     */
+    std::string getAdapterVersion() const override { return getVersion(); }
+    
+    /**
+     * @brief 获取机器人固件版本
+     * @return 固件版本字符串
+     */
+    std::string getFirmwareVersion() const override;
+    
+    /**
+     * @brief 获取机器人序列号
+     * @return 序列号字符串
+     */
+    std::string getSerialNumber() const override;
+    
+    // ============= 能力查询 (Capabilities) =============
+    
+    /**
+     * @brief 获取机器人运动能力
+     * @return 运动能力结构体
+     */
+    robot_base_interfaces::motion_interface::MotionCapabilities getMotionCapabilities() const override;
+    
+    /**
+     * @brief 获取可用传感器列表
+     * @return 传感器信息列表
+     */
+    std::vector<robot_base_interfaces::sensor_interface::SensorInfo> getAvailableSensors() const override;
+    
+    /**
+     * @brief 获取支持的充电类型
+     * @return 充电类型列表
+     */
+    std::vector<robot_base_interfaces::power_interface::ChargingType> getSupportedChargingTypes() const override;
+    
+    /**
+     * @brief 检查是否支持特定功能
+     * @param capability_name 功能名称
+     * @return true if supported, false otherwise
+     */
+    bool hasCapability(const std::string& capability_name) const override;
 
     // ============= Go2专有功能访问 (Go2-Specific Accessors) =============
     
@@ -176,13 +247,27 @@ public:
      * @brief 从ROS参数服务器加载配置。
      * @return 加载成功返回true。
      */
-    bool loadConfiguration();
+    bool loadConfiguration() { return loadConfigurationImpl(); }
+    
+    /**
+     * @brief 加载配置文件（IRobotAdapter接口方法）
+     * @param config_file_path 配置文件路径
+     * @return true if successful, false otherwise
+     */
+    bool loadConfiguration(const std::string& config_file_path) override;
     
     /**
      * @brief (未实现) 保存当前配置到ROS参数服务器。
      * @return 默认为true。
      */
-    bool saveConfiguration();
+    bool saveConfiguration() { return saveConfigurationImpl(); }
+    
+    /**
+     * @brief 保存配置到文件（IRobotAdapter接口方法）
+     * @param config_file_path 配置文件路径
+     * @return true if successful, false otherwise
+     */
+    bool saveConfiguration(const std::string& config_file_path) const override;
     
     /**
      * @brief 重新加载所有ROS参数。
@@ -195,6 +280,54 @@ public:
      * @return 包含所有配置项的JSON字符串。
      */
     std::string getConfiguration() const;
+    
+    /**
+     * @brief 获取配置参数
+     * @param parameter_name 参数名
+     * @param value 输出参数值
+     * @return true if found, false otherwise
+     */
+    bool getConfigParameter(const std::string& parameter_name, std::string& value) const override;
+    
+    /**
+     * @brief 设置配置参数
+     * @param parameter_name 参数名
+     * @param value 参数值
+     * @return true if successful, false otherwise
+     */
+    bool setConfigParameter(const std::string& parameter_name, const std::string& value) override;
+    
+    // ============= 网络和通信 (Network & Communication) =============
+    
+    /**
+     * @brief 获取机器人网络地址
+     * @return IP地址字符串
+     */
+    std::string getRobotNetworkAddress() const override;
+    
+    /**
+     * @brief 获取通信端口
+     * @return 端口号
+     */
+    int getCommunicationPort() const override;
+    
+    /**
+     * @brief 检查与机器人的连接状态
+     * @return true if connected, false otherwise
+     */
+    bool isConnected() const override;
+    
+    /**
+     * @brief 建立与机器人的连接
+     * @return true if successful, false otherwise
+     */
+    bool connect() override;
+    
+    /**
+     * @brief 断开与机器人的连接
+     * @return true if successful, false otherwise
+     */
+    bool disconnect() override;
 
     // ============= 诊断和监控 (Diagnostics & Monitoring) =============
     
@@ -214,7 +347,7 @@ public:
      * @brief 执行一次完整的系统自检。
      * @return 一个map，键为检查项，值为检查结果(true/false)。
      */
-    std::map<std::string, bool> performSystemCheck();
+    std::map<std::string, bool> performSystemCheck() override;
     
     /**
      * @brief 获取当前记录的所有错误消息。
@@ -224,8 +357,21 @@ public:
     
     /**
      * @brief 清空已记录的错误消息。
+     * @return 如果清空成功返回true，否则返回false。
      */
-    void clearErrors();
+    bool clearErrors() override;
+    
+    /**
+     * @brief 获取诊断信息
+     * @return 诊断信息 (JSON格式字符串)
+     */
+    std::string getDiagnosticInfo() const override;
+    
+    /**
+     * @brief 获取最后的错误信息
+     * @return 错误信息字符串
+     */
+    std::string getLastError() const override;
 
     // ============= 事件和回调 (Events & Callbacks) =============
     
@@ -243,7 +389,28 @@ public:
      */
     void setErrorCallback(
         std::function<void(const std::string& error)> callback
-    );
+    ) { setErrorCallback([callback](const std::string& error_msg, int) { callback(error_msg); }); }
+    
+    /**
+     * @brief 设置适配器状态变化回调（IRobotAdapter接口方法）
+     * @param callback 回调函数
+     */
+    void setAdapterStatusCallback(
+        std::function<void(bool is_operational, const std::string& status_msg)> callback) override;
+    
+    /**
+     * @brief 设置连接状态变化回调（IRobotAdapter接口方法）
+     * @param callback 回调函数
+     */
+    void setConnectionStatusCallback(
+        std::function<void(bool is_connected, const std::string& connection_info)> callback) override;
+    
+    /**
+     * @brief 设置错误事件回调（IRobotAdapter接口方法）
+     * @param callback 回调函数
+     */
+    void setErrorCallback(
+        std::function<void(const std::string& error_msg, int error_code)> callback) override;
 
     // ============= 静态方法 (Static Methods) =============
     
@@ -299,7 +466,14 @@ protected:
      * @brief 验证当前加载的配置参数是否有效。
      * @return 全部有效返回true。
      */
-    bool validateConfiguration() const;
+    bool validateConfiguration() const { return validateConfigurationImpl(); }
+    
+    /**
+     * @brief 验证配置参数 (IRobotAdapter接口方法)
+     * @param config 配置映射
+     * @return true if valid, false otherwise
+     */
+    bool validateConfiguration(const std::map<std::string, std::string>& config) const override;
     
     /**
      * @brief 记录一条错误信息到日志和内部错误列表。
@@ -318,6 +492,31 @@ protected:
      * @return 估算的内存使用量（MB）。
      */
     double getMemoryUsageMB() const;
+    
+    /**
+     * @brief 设置最后的错误信息 (IRobotAdapter接口方法)
+     * @param error_message 错误信息
+     * @param error_code 错误代码
+     */
+    void setLastError(const std::string& error_message, int error_code = -1) override;
+    
+    /**
+     * @brief 从ROS参数服务器加载配置的实际实现
+     * @return 加载成功返回true
+     */
+    bool loadConfigurationImpl();
+    
+    /**
+     * @brief 保存配置到ROS参数服务器的实际实现
+     * @return 保存成功返回true
+     */
+    bool saveConfigurationImpl();
+    
+    /**
+     * @brief 验证配置的实际实现
+     * @return 配置有效返回true
+     */
+    bool validateConfigurationImpl() const;
 
 private:
     // ============= 核心状态 (Core State) =============
@@ -325,6 +524,8 @@ private:
     bool is_operational_;                       ///< 标志位：适配器当前是否可正常操作。
     std::string current_status_;                ///< 描述当前状态的字符串 (e.g., "INITIALIZING", "OPERATIONAL", "ERROR").
     std::vector<std::string> error_messages_;   ///< 存储历史错误消息的列表。
+    std::string last_error_;                    ///< 最后一次错误信息
+    int last_error_code_;                       ///< 最后一次错误代码
 
     // ============= 子功能模块实例 (Subsystem Instances) =============
     // 使用智能指针管理模块的生命周期
@@ -359,8 +560,8 @@ private:
     std::atomic<uint64_t> heartbeat_count_{0};       ///< 心跳计数器，原子类型保证线程安全
 
     // ============= 事件回调函数 (Event Callbacks) =============
-    std::function<void(const std::string&)> status_callback_;   ///< 外部注册的状态变化回调函数
-    std::function<void(const std::string&)> error_callback_;    ///< 外部注册的错误事件回调函数
+    std::function<void(const std::string&)>      status_callback_;  ///< 外部注册的状态变化回调函数
+    std::function<void(const std::string&, int)> error_callback_;   ///< IRobotAdapter错误事件回调函数
 
     // ============= ROS接口对象 (ROS Interface Objects) =============
     rclcpp::TimerBase::SharedPtr heartbeat_timer_;              ///< 心跳定时器对象

@@ -2,7 +2,7 @@
  * @file   go2_adapter.cpp
  * @brief  Go2机器人适配器主类的实现文件
  * @author Yang nan
- * @date   2025-09-11
+ * @date   2025-09-12
  *
  * @details
  * 本文件包含了`Go2Adapter`类所有方法的具体实现。
@@ -24,6 +24,7 @@
 #include <sstream>     // 用于高效构建字符串，例如生成JSON格式的状态和配置信息
 #include <fstream>     // 用于文件读写操作，此处特用于从/proc文件系统读取内存使用情况
 #include <cstdlib>     // 提供`system`函数，用于执行外部shell命令，例如ping命令来检查网络连通性
+#include <set>         // 用于存储支持的能力集合
 
 // 使用C++14标准的时间字面量，使得可以直接使用 `100ms` 这样的语法来表示时间段
 using namespace std::chrono_literals;
@@ -46,7 +47,8 @@ Go2Adapter::Go2Adapter(const std::string& node_name, const rclcpp::NodeOptions& 
     : rclcpp::Node(node_name, node_options) // 调用父类rclcpp::Node的构造函数
     , is_initialized_(false)                        // 初始化标志位，初始为false
     , is_operational_(false)                        // 可操作标志位，初始为false
-    , current_status_("NOT_INITIALIZED")          // 当前状态字符串，初始为“未初始化”
+    , current_status_("NOT_INITIALIZED")          // 当前状态字符串，初始为"未初始化"
+    , last_error_code_(0)                          // 初始化错误代码
     , start_time_(std::chrono::steady_clock::now()) // 记录节点启动时间
 {
     // 记录日志，表明Go2Adapter节点已创建
@@ -159,14 +161,14 @@ bool Go2Adapter::initialize() {
  * 2. 关闭所有子系统。
  * 3. 更新状态标志位为"SHUTDOWN"。
  */
-void Go2Adapter::shutdown() {
+bool Go2Adapter::shutdown() {
     // 使用互斥锁保护状态变量
     std::lock_guard<std::mutex> lock(status_mutex_);
 
-    // 如果未初始化，则无需关闭，直接返回
+    // 如果未初始化，则无需关闭，直接返回true（表示成功）
     if (!is_initialized_) {
         RCLCPP_WARN(this->get_logger(), "Go2Adapter not initialized, nothing to shutdown");
-        return;
+        return true;
     }
 
     RCLCPP_INFO(this->get_logger(), "Shutting down Go2Adapter...");
@@ -188,11 +190,13 @@ void Go2Adapter::shutdown() {
         updateStatus("SHUTDOWN");
 
         RCLCPP_INFO(this->get_logger(), "Go2Adapter shutdown completed");
+        return true;
 
     } catch (const std::exception& e) {
         // 捕获关闭过程中可能出现的异常
         logError(std::string("Exception during shutdown: ") + e.what());
         updateStatus("SHUTDOWN_FAILED");
+        return false;
     }
 }
 
@@ -216,7 +220,7 @@ bool Go2Adapter::isOperational() const {
  * 声明并获取所有在YAML配置文件中定义的参数。
  * 如果`verbose_logging`为true，则会打印加载到的详细配置信息。
  */
-bool Go2Adapter::loadConfiguration() {
+bool Go2Adapter::loadConfigurationImpl() {
     RCLCPP_INFO(this->get_logger(), "Loading configuration parameters...");
 
     try {
@@ -277,9 +281,9 @@ bool Go2Adapter::loadConfiguration() {
 /**
  * @brief 保存当前配置（尚未实现）
  * @return 总是返回true。
- * TODO: 类似于loadConfiguration函数，将其保存到某个YAML文件下。
+ * TODO: 类似于loadConfiguration函数，将其保存到`configs`里某个合适的文件夹下，格式就是yaml格式。
  */
-bool Go2Adapter::saveConfiguration() {
+bool Go2Adapter::saveConfigurationImpl() {
     RCLCPP_INFO(this->get_logger(), "Saving configuration not implemented yet");
     return true;
 }
@@ -309,12 +313,12 @@ std::string Go2Adapter::getConfiguration() const {
         << "\"enable_sensor_interface\": "  << (config_.enable_sensor_interface ? "true" : "false") << ","
         << "\"enable_state_monitor\": "     << (config_.enable_state_monitor    ? "true" : "false") << ","
         << "\"enable_power_manager\": "     << (config_.enable_power_manager    ? "true" : "false") << ","
-        << "\"heartbeat_frequency\": "      << config_.heartbeat_frequency  << ","
-        << "\"timeout_duration\": "         << config_.timeout_duration     << ","
-        << "\"go2_ip_address\": \""         << config_.go2_ip_address       << "\","
-        << "\"go2_port\": "                 << config_.go2_port             << ","
-        << "\"debug_mode\": "               << (config_.debug_mode      ? "true" : "false") << ","
-        << "\"verbose_logging\": "          << (config_.verbose_logging ? "true" : "false")
+        << "\"heartbeat_frequency\": "      << config_.heartbeat_frequency                          << ","
+        << "\"timeout_duration\": "         << config_.timeout_duration                             << ","
+        << "\"go2_ip_address\": \""         << config_.go2_ip_address                               << "\","
+        << "\"go2_port\": "                 << config_.go2_port                                     << ","
+        << "\"debug_mode\": "               << (config_.debug_mode              ? "true" : "false") << ","
+        << "\"verbose_logging\": "          << (config_.verbose_logging         ? "true" : "false")
         << "}";
 
     return oss.str();
@@ -421,10 +425,13 @@ std::vector<std::string> Go2Adapter::getErrorMessages() const {
 /**
  * @brief 清除所有已记录的错误信息
  */
-void Go2Adapter::clearErrors() {
+bool Go2Adapter::clearErrors() {
     std::lock_guard<std::mutex> lock(error_mutex_);
     error_messages_.clear();
+    last_error_.clear();
+    last_error_code_ = 0;
     RCLCPP_INFO(this->get_logger(), "Error messages cleared");
+    return true;
 }
 
 // ============= 事件和回调 (Events & Callbacks) =============
@@ -437,13 +444,6 @@ void Go2Adapter::setStatusChangeCallback(std::function<void(const std::string&)>
     status_callback_ = callback;
 }
 
-/**
- * @brief 设置发生错误时的回调函数
- * @param callback 当记录新错误时要调用的函数。
- */
-void Go2Adapter::setErrorCallback(std::function<void(const std::string&)> callback) {
-    error_callback_ = callback;
-}
 
 // ============= 静态方法 (Static Methods) =============
 
@@ -642,7 +642,7 @@ void Go2Adapter::setupRosInterfaces() {
  * @brief 验证加载的配置是否有效
  * @return 如果所有关键配置项都在合理范围内，返回true；否则返回false。
  */
-bool Go2Adapter::validateConfiguration() const {
+bool Go2Adapter::validateConfigurationImpl() const {
     // 验证心跳频率是否在有效范围内
     if (config_.heartbeat_frequency <= 0.0 || config_.heartbeat_frequency > 100.0) {
         RCLCPP_ERROR(this->get_logger(), "Invalid heartbeat frequency: %f", config_.heartbeat_frequency);
@@ -692,7 +692,7 @@ void Go2Adapter::logError(const std::string& error_msg) {
 
     // 如果外部注册了错误回调函数，则调用它
     if (error_callback_) {
-        error_callback_(error_msg);
+        error_callback_(error_msg, -1);  // 默认错误代码为-1
     }
 }
 
@@ -835,6 +835,219 @@ void Go2Adapter::systemCheckServiceCallback(
 
     response->success = all_passed;
     response->message = oss.str();
+}
+
+// ============= IRobotAdapter 接口实现 (IRobotAdapter Interface Implementation) =============
+
+std::string Go2Adapter::getFirmwareVersion() const {
+    // TODO: 从机器人获取真实的固件版本信息
+    return "v1.0.0";
+}
+
+std::string Go2Adapter::getSerialNumber() const {
+    // TODO: 从机器人获取真实的序列号
+    return "GO2-SN-000000";
+}
+
+robot_base_interfaces::motion_interface::MotionCapabilities Go2Adapter::getMotionCapabilities() const {
+    robot_base_interfaces::motion_interface::MotionCapabilities capabilities;
+    capabilities.max_linear_velocity = 1.5f;  // m/s
+    capabilities.max_angular_velocity = 2.0f; // rad/s
+    capabilities.max_lateral_velocity = 0.8f; // m/s
+    capabilities.max_roll_angle = 0.4f;       // rad
+    capabilities.max_pitch_angle = 0.4f;      // rad
+    capabilities.min_body_height = 0.20f;     // m
+    capabilities.max_body_height = 0.42f;     // m
+    capabilities.can_climb_stairs = true;
+    capabilities.can_balance = true;
+    capabilities.can_lateral_move = true;
+    capabilities.can_dance = true;
+    capabilities.can_jump = true;
+    capabilities.can_flip = true;
+    return capabilities;
+}
+
+std::vector<robot_base_interfaces::sensor_interface::SensorInfo> Go2Adapter::getAvailableSensors() const {
+    std::vector<robot_base_interfaces::sensor_interface::SensorInfo> sensors;
+    
+    robot_base_interfaces::sensor_interface::SensorInfo lidar_info;
+    lidar_info.name = "livox_mid360";
+    lidar_info.type = robot_base_interfaces::sensor_interface::SensorType::LIDAR_3D;
+    lidar_info.frame_id = "utlidar_lidar";
+    lidar_info.topic_name = "/utlidar/cloud";
+    lidar_info.frequency = 10.0f;  // Hz
+    lidar_info.status = robot_base_interfaces::sensor_interface::SensorStatus::ACTIVE;
+    sensors.push_back(lidar_info);
+    
+    robot_base_interfaces::sensor_interface::SensorInfo imu_info;
+    imu_info.name = "go2_imu";
+    imu_info.type = robot_base_interfaces::sensor_interface::SensorType::IMU;
+    imu_info.frame_id = "imu_link";
+    imu_info.topic_name = "/imu";
+    imu_info.frequency = 100.0f;  // Hz
+    imu_info.status = robot_base_interfaces::sensor_interface::SensorStatus::ACTIVE;
+    sensors.push_back(imu_info);
+    
+    return sensors;
+}
+
+std::vector<robot_base_interfaces::power_interface::ChargingType> Go2Adapter::getSupportedChargingTypes() const {
+    return {robot_base_interfaces::power_interface::ChargingType::WIRELESS};
+}
+
+bool Go2Adapter::hasCapability(const std::string& capability_name) const {
+    static const std::set<std::string> supported_capabilities = {
+        "motion_control",
+        "lidar_sensing",
+        "imu_sensing", 
+        "wireless_charging",
+        "autonomous_navigation",
+        "slam"
+    };
+    return supported_capabilities.find(capability_name) != supported_capabilities.end();
+}
+
+bool Go2Adapter::loadConfiguration(const std::string& config_file_path) {
+    if (config_file_path.empty()) {
+        // 使用默认的ROS参数加载
+        return loadConfiguration();
+    } else {
+        // TODO: 实现从文件加载配置
+        RCLCPP_WARN(this->get_logger(), "Loading configuration from file not implemented yet: %s", 
+                    config_file_path.c_str());
+        return false;
+    }
+}
+
+bool Go2Adapter::saveConfiguration(const std::string& config_file_path) const {
+    // TODO: 实现保存配置到文件
+    RCLCPP_WARN(this->get_logger(), "Saving configuration to file not implemented yet: %s", 
+                config_file_path.c_str());
+    return false;
+}
+
+bool Go2Adapter::getConfigParameter(const std::string& parameter_name, std::string& value) const {
+    try {
+        if (parameter_name == "go2_ip_address") {
+            value = config_.go2_ip_address;
+            return true;
+        } else if (parameter_name == "go2_port") {
+            value = std::to_string(config_.go2_port);
+            return true;
+        } else if (parameter_name == "heartbeat_frequency") {
+            value = std::to_string(config_.heartbeat_frequency);
+            return true;
+        }
+        // TODO: 添加更多参数支持
+        return false;
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "Error getting config parameter %s: %s", 
+                     parameter_name.c_str(), e.what());
+        return false;
+    }
+}
+
+bool Go2Adapter::setConfigParameter(const std::string& parameter_name, const std::string& value) {
+    try {
+        if (parameter_name == "go2_ip_address") {
+            config_.go2_ip_address = value;
+            return true;
+        } else if (parameter_name == "go2_port") {
+            config_.go2_port = std::stoi(value);
+            return true;
+        } else if (parameter_name == "heartbeat_frequency") {
+            config_.heartbeat_frequency = std::stod(value);
+            return true;
+        }
+        // TODO: 添加更多参数支持
+        return false;
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "Error setting config parameter %s: %s", 
+                     parameter_name.c_str(), e.what());
+        return false;
+    }
+}
+
+std::string Go2Adapter::getRobotNetworkAddress() const {
+    return config_.go2_ip_address;
+}
+
+int Go2Adapter::getCommunicationPort() const {
+    return config_.go2_port;
+}
+
+bool Go2Adapter::isConnected() const {
+    // TODO: 实现真正的连接状态检查
+    return is_operational_;
+}
+
+bool Go2Adapter::connect() {
+    // TODO: 实现连接逻辑
+    RCLCPP_INFO(this->get_logger(), "Connecting to Go2 robot...");
+    return true;
+}
+
+bool Go2Adapter::disconnect() {
+    // TODO: 实现断开连接逻辑
+    RCLCPP_INFO(this->get_logger(), "Disconnecting from Go2 robot...");
+    return true;
+}
+
+std::string Go2Adapter::getDiagnosticInfo() const {
+    std::ostringstream oss;
+    oss << "{";
+    oss << "\"initialized\": "     << (is_initialized_ ? "true" : "false") << ",";
+    oss << "\"operational\": "     << (is_operational_ ? "true" : "false") << ",";
+    oss << "\"status\": \""        << current_status_                      << "\",";
+    oss << "\"error_count\": "     << error_messages_.size()               << ",";
+    oss << "\"last_error\": \""    << last_error_                          << "\",";
+    oss << "\"heartbeat_count\": " << heartbeat_count_.load();
+    oss << "}";
+    return oss.str();
+}
+
+std::string Go2Adapter::getLastError() const {
+    std::lock_guard<std::mutex> lock(error_mutex_);
+    return last_error_;
+}
+
+void Go2Adapter::setAdapterStatusCallback(
+    std::function<void(bool is_operational, const std::string& status_msg)> callback) {
+    // 将IRobotAdapter的回调转换为内部回调
+    setStatusChangeCallback([callback, this](const std::string& status) {
+        callback(this->is_operational_, status);
+    });
+}
+
+void Go2Adapter::setConnectionStatusCallback(
+    std::function<void(bool is_connected, const std::string& connection_info)> callback) {
+    (void)callback;  // 避免未使用参数的警告
+    // TODO: 实现连接状态回调
+    RCLCPP_WARN(this->get_logger(), "Connection status callback not implemented yet");
+}
+
+void Go2Adapter::setErrorCallback(
+    std::function<void(const std::string& error_msg, int error_code)> callback) {
+    error_callback_ = [callback](const std::string& error_msg, int error_code) {
+        callback(error_msg, error_code);
+    };
+}
+
+bool Go2Adapter::validateConfiguration(const std::map<std::string, std::string>& config) const {
+    (void)config;  // 避免未使用参数的警告
+    // TODO: 实现配置验证逻辑
+    return true;
+}
+
+void Go2Adapter::setLastError(const std::string& error_message, int error_code) {
+    std::lock_guard<std::mutex> lock(error_mutex_);
+    last_error_ = error_message;
+    last_error_code_ = error_code;
+    
+    // 同时调用错误回调
+    if (error_callback_) {
+        error_callback_(error_message, error_code);
+    }
 }
 
 

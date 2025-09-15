@@ -1,8 +1,8 @@
 /**
- * @file go2_power_manager.hpp
- * @brief Go2机器人电源管理具体实现
- * @author Claude Code
- * @date 2024
+ * @file   go2_power_manager.hpp
+ * @brief  Go2机器人电源管理具体实现
+ * @author Yang Nan
+ * @date   2025-09-14
  * 
  * 基于Go2的BmsState实现统一电源管理接口，提供：
  * - 电池状态监控和报告
@@ -29,9 +29,13 @@
 #include "robot_base_interfaces/power_interface/power_types.hpp"
 #include "robot_base_interfaces/common/result.hpp"
 
-// Go2 ROS2消息类型 - 假设从go_ros2包导入
-// #include "unitree_go/msg/bms_state.hpp"
-// #include "unitree_go/msg/wireless_controller.hpp"
+// Go2 ROS2消息类型
+#include "unitree_go/msg/bms_state.hpp"
+#include "unitree_go/msg/wireless_controller.hpp"
+
+// Go2 适配器相关类
+#include "robot_adapters/go2_adapter/go2_communication.hpp"
+#include "robot_adapters/go2_adapter/go2_message_converter.hpp"
 
 namespace robot_adapters {
 namespace go2_adapter {
@@ -157,7 +161,7 @@ public:
      * @brief 获取Go2原生BMS状态数据
      * @return BMS状态原始数据
      */
-    // unitree_go::msg::BmsState getNativeBmsState() const;
+    std::shared_ptr<unitree_go::msg::BmsState> getNativeBmsState() const;
     
     /**
      * @brief 设置Go2充电模式
@@ -195,11 +199,10 @@ protected:
 private:
     // ============= ROS2相关 =============
     std::shared_ptr<rclcpp::Node> node_;            ///< ROS节点指针
-    
-    // ROS订阅者和发布者 (暂时使用自定义消息类型直到Go2消息可用)
-    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr bms_subscriber_;
-    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr wireless_controller_subscriber_;
-    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr command_publisher_;
+
+    // Go2通信管理器和消息转换器
+    std::shared_ptr<Go2Communication> go2_comm_;    ///< Go2通信管理器
+    std::shared_ptr<Go2MessageConverter> converter_;///< Go2消息转换器
     
     // 定时器
     rclcpp::TimerBase::SharedPtr monitoring_timer_;
@@ -296,17 +299,17 @@ private:
     /**
      * @brief BMS状态回调函数
      */
-    void bmsStateCallback(const std_msgs::msg::String::SharedPtr msg);
-    
+    void bmsStateCallback(const unitree_go::msg::BmsState::SharedPtr msg);
+
     /**
-     * @brief 无线控制器回调函数  
+     * @brief 无线控制器回调函数
      */
-    void wirelessControllerCallback(const std_msgs::msg::String::SharedPtr msg);
-    
+    void wirelessControllerCallback(const unitree_go::msg::WirelessController::SharedPtr msg);
+
     /**
-     * @brief 设置ROS接口
+     * @brief 设置Go2通信和消息转换器
      */
-    void setupRosInterfaces();
+    void setupGo2Communication();
     
     /**
      * @brief 监控定时器回调

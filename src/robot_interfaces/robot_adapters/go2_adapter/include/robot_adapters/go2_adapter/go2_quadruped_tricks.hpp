@@ -1,11 +1,15 @@
 #pragma once // 防止头文件被重复包含
 
 #include <rclcpp/rclcpp.hpp> // 引入ROS2 C++客户端库
-#include <std_msgs/msg/string.hpp> // 引入标准消息类型，用于发送简单的字符串命令
 #include <string> // 引入C++标准字符串库
 #include <memory> // 引入智能指针库
 
+// Go2机器人特定消息类型
+#include "unitree_api/msg/request.hpp" // 引入Go2 API请求消息
+#include "unitree_api/msg/response.hpp" // 引入Go2 API响应消息
+
 #include "robot_base_interfaces/motion_interface/i_quadruped_tricks.hpp" // 引入四足机器人特技接口的基类定义
+#include "robot_adapters/go2_adapter/go2_communication.hpp" // 引入Go2通信管理器
 
 namespace robot_adapters {
 namespace go2_adapter {
@@ -30,9 +34,10 @@ class Go2QuadrupedTricks : public robot_base_interfaces::motion_interface::IQuad
 public:
     /**
      * @brief 构造函数
+     * @param communication Go2通信管理器的共享指针，用于与机器人通信。
      * @param logger 一个ROS日志记录器实例，用于输出日志信息。
      */
-    explicit Go2QuadrupedTricks(const rclcpp::Logger& logger);
+    Go2QuadrupedTricks(std::shared_ptr<Go2Communication> communication, const rclcpp::Logger& logger);
 
     /**
      * @brief 析构函数 (默认)
@@ -115,17 +120,16 @@ public:
 
 private:
     rclcpp::Logger logger_; ///< 用于记录日志的ROS日志记录器
-    std::shared_ptr<rclcpp::Node> node_; ///< 一个内部ROS节点，用于创建发布者等
-    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr command_publisher_; ///< 用于发布Go2 API命令的ROS发布者
+    std::shared_ptr<Go2Communication> communication_; ///< Go2通信管理器，用于发送API请求
 
     /**
-     * @brief 发送一个封装好的命令到Go2的API接口。
+     * @brief 发送Go2 API请求到机器人。
      * @param api_id 要调用的Go2 API的ID。
-     * @param parameters 命令所需的参数，通常是一个JSON字符串。默认为空字符串。
+     * @param parameters 命令所需的参数，JSON格式字符串。默认为空字符串。
      * @return 如果命令成功发布，返回true；否则返回false。
-     * @details 这是一个内部辅助函数，用于将高级动作请求转换为低级API调用。
+     * @details 使用Go2Communication发送标准的unitree_api::msg::Request消息。
      */
-    bool sendGo2Command(uint32_t api_id, const std::string& parameters = "");
+    bool sendGo2ApiRequest(uint32_t api_id, const std::string& parameters = "");
 
     /**
      * @brief 等待一个动作完成的辅助函数。
@@ -135,6 +139,12 @@ private:
      * 在实际应用中，应替换为基于机器人状态反馈的更可靠的完成检测机制。
      */
     void waitForCompletion(uint32_t duration_ms = 3000);
+
+    /**
+     * @brief 验证通信连接状态。
+     * @return 如果通信正常，返回true；否则返回false。
+     */
+    bool validateConnection() const;
 };
 
 } // namespace go2_adapter

@@ -138,6 +138,9 @@ struct DetailedRobotState {
     float       health_score = 0.0f;                ///< 健康评分 (0.0-1.0)
     uint64_t    timestamp_ns = 0;                   ///< 时间戳
     uint32_t    error_code   = 0;                   ///< 全局错误代码
+
+    float system_v = 0.0f;          ///< 系统电压(V)
+    float system_a = 0.0f;          ///< 系统电流(A)
     
     // 运动状态 (来自SportModeState)
     struct {
@@ -169,6 +172,15 @@ struct DetailedRobotState {
     // 足端状态 (Go2有4个足端)
     std::vector<FootInfo>  feet;
     
+    // IMU状态 - 与unitree_go::msg::IMUState保持一致
+    struct {
+        std::vector<float> quaternion;      ///< 四元数 (w, x, y, z) - 4个元素
+        std::vector<float> gyroscope;       ///< 陀螺仪 (rad/s) - 3个元素
+        std::vector<float> accelerometer;   ///< 加速度计 (m/s^2) - 3个元素
+        std::vector<float> rpy;             ///< 欧拉角 (roll, pitch, yaw) - 3个元素
+        int8_t temperature = 0;             ///< IMU温度 (°C)
+    } imu;
+    
     // 传感器状态
     struct {
         bool   imu_online      = false;
@@ -197,12 +209,30 @@ struct DetailedRobotState {
     
     // 障碍物感知 (Go2特有)
     std::vector<float> range_obstacles; ///< 4个方向的障碍物距离
+
+    // 遥控器状态 - 基于unitree_go::msg::WirelessController
+    struct {
+        float lx = 0.0f;                    ///< 左摇杆X轴值 (-1.0 ~ 1.0)
+        float ly = 0.0f;                    ///< 左摇杆Y轴值 (-1.0 ~ 1.0)
+        float rx = 0.0f;                    ///< 右摇杆X轴值 (-1.0 ~ 1.0)
+        float ry = 0.0f;                    ///< 右摇杆Y轴值 (-1.0 ~ 1.0)
+        uint16_t keys = 0;                  ///< 按键状态位掩码
+        bool is_connected = false;          ///< 遥控器是否连接
+        uint64_t last_update_ns = 0;        ///< 最后更新时间戳
+    } wireless_controller;
     
     DetailedRobotState() {
         // 为Go2初始化固定数量的电机和足端
         motors.resize(20);
         feet.resize(4);
         range_obstacles.resize(4, 0.0f);
+        
+        // 初始化IMU向量大小
+        imu.quaternion.resize(4, 0.0f);     // 四元数：w, x, y, z
+        imu.gyroscope.resize(3, 0.0f);      // 陀螺仪：x, y, z
+        imu.accelerometer.resize(3, 0.0f);  // 加速度计：x, y, z
+        imu.rpy.resize(3, 0.0f);            // 欧拉角：roll, pitch, yaw
+        imu.quaternion[0] = 1.0f;                       // w分量初始化为1
         
         // 初始化电机ID
         for (size_t i = 0; i < motors.size(); ++i) {

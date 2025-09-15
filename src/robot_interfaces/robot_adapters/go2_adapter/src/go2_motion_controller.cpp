@@ -1,10 +1,11 @@
 /**
  * @file go2_motion_controller.cpp
  * @brief Go2机器人运动控制器完整实现
- * 
+ *
  * 本文件实现了Go2机器人的运动控制功能，包括：
  * - 统一运动接口的完整实现
- * - Go2 API命令的封装和发送
+ * - Go2 API命令的正确封装和发送
+ * - 基于go2_communication和go2_message_converter的消息转换
  * - 机器人状态的实时监控和转换
  * - 安全限制和错误处理
  * - 回调函数和事件通知
@@ -28,7 +29,11 @@ Go2MotionController::Go2MotionController(const std::string& node_name)
 {
     // 记录节点启动信息
     RCLCPP_INFO(this->get_logger(), "Go2 Motion Controller节点正在初始化...");
-    
+
+    // 创建Go2通信管理器和消息转换器
+    go2_communication_ = std::make_shared<Go2Communication>(shared_from_this());
+    go2_converter_ = std::make_shared<Go2MessageConverter>();
+
     // 初始化运动状态结构体
     current_motion_state_.current_mode = robot_base_interfaces::motion_interface::MotionMode::IDLE;
     current_motion_state_.current_gait = robot_base_interfaces::motion_interface::GaitType::IDLE;
@@ -36,7 +41,7 @@ Go2MotionController::Go2MotionController(const std::string& node_name)
     current_motion_state_.is_balanced = false;
     current_motion_state_.motion_progress = 0.0f;
     current_motion_state_.posture.body_height = DEFAULT_BODY_HEIGHT;
-    
+
     // 初始化回调函数为空
     state_callback_ = nullptr;
     error_callback_ = nullptr;
@@ -54,16 +59,25 @@ robot_base_interfaces::motion_interface::MotionResult Go2MotionController::initi
     RCLCPP_INFO(this->get_logger(), "正在初始化Go2运动控制器...");
     
     try {
+        // 初始化Go2通信管理器
+        if (!go2_communication_->initialize()) {
+            throw std::runtime_error("Go2通信管理器初始化失败");
+        }
+
+        // 设置Go2状态回调
+        go2_communication_->setSportModeStateCallback(
+            std::bind(&Go2MotionController::sportModeStateCallback, this, std::placeholders::_1));
+
         // 初始化ROS2通信组件
         initializeROS2Communications();
-        
+
         // 设置初始化标志
         is_initialized_ = true;
         current_error_code_ = 0;
-        
+
         // 记录初始化完成时间
         last_command_time_ = std::chrono::steady_clock::now();
-        
+
         RCLCPP_INFO(this->get_logger(), "Go2运动控制器初始化完成");
         return robot_base_interfaces::motion_interface::MotionResult::SUCCESS;
     }
@@ -81,20 +95,30 @@ robot_base_interfaces::motion_interface::MotionResult Go2MotionController::shutd
     try {
         // 发送紧急停止命令确保安全
         emergencyStop(robot_base_interfaces::motion_interface::EmergencyStopLevel::SOFT_STOP);
-        
+
+        // 关闭Go2通信管理器
+        if (go2_communication_) {
+            go2_communication_->shutdown();
+        }
+
         // 重置所有ROS2发布器和订阅器
         api_request_pub_.reset();
+        api_response_sub_.reset();
         sport_state_sub_.reset();
         cmd_vel_pub_.reset();
-        
+
+        // 重置Go2组件
+        go2_communication_.reset();
+        go2_converter_.reset();
+
         // 清理回调函数
         state_callback_ = nullptr;
         error_callback_ = nullptr;
-        
+
         // 重置状态标志
         is_initialized_ = false;
         current_error_code_ = 0;
-        
+
         RCLCPP_INFO(this->get_logger(), "Go2运动控制器已安全关闭");
         return robot_base_interfaces::motion_interface::MotionResult::SUCCESS;
     }
@@ -261,19 +285,19 @@ robot_base_interfaces::motion_interface::MotionResult Go2MotionController::emerg
             // 软停止：先设置速度为0，然后切换到阻尼模式
             success = sendVelocityCommand(0.0f, 0.0f, 0.0f);
             if (success) {
-                success = sendGo2Command(1007); // Go2 API: 阻尼模式
+                success = sendGo2ApiCommand(API_ID_DAMP);
             }
             break;
-            
+
         case robot_base_interfaces::motion_interface::EmergencyStopLevel::HARD_STOP:
-            // 硬停止：立即切换到关节锁定模式
-            success = sendGo2Command(1006); // Go2 API: 关节锁定
+            // 硬停止：立即停止移动
+            success = sendGo2ApiCommand(API_ID_STOP_MOVE);
             break;
-            
+
         case robot_base_interfaces::motion_interface::EmergencyStopLevel::POWER_OFF:
             // 断电停止：这需要硬件级别的控制，这里暂时实现为硬停止
             RCLCPP_WARN(this->get_logger(), "断电停止功能需要硬件支持，执行硬停止代替");
-            success = sendGo2Command(1006); // Go2 API: 关节锁定
+            success = sendGo2ApiCommand(API_ID_STOP_MOVE);
             break;
     }
     
@@ -311,30 +335,31 @@ robot_base_interfaces::motion_interface::MotionResult Go2MotionController::switc
     // 将统一运动模式转换为Go2 API命令
     switch (mode) {
         case robot_base_interfaces::motion_interface::MotionMode::IDLE:
-            api_id = 1001; // Go2 API: 待机模式
+            api_id = API_ID_DAMP;
             break;
         case robot_base_interfaces::motion_interface::MotionMode::BALANCE_STAND:
-            api_id = 1002; // Go2 API: 平衡站立
+            api_id = API_ID_BALANCE_STAND;
             break;
         case robot_base_interfaces::motion_interface::MotionMode::LOCOMOTION:
-            api_id = 1003; // Go2 API: 运动模式
+            // 运动模式没有直接的API，需要先确保站立状态
+            api_id = API_ID_BALANCE_STAND;
             break;
         case robot_base_interfaces::motion_interface::MotionMode::LIE_DOWN:
-            api_id = 1005; // Go2 API: 趴下
+            api_id = API_ID_STAND_DOWN;
             break;
         case robot_base_interfaces::motion_interface::MotionMode::SIT:
-            api_id = 1009; // Go2 API: 坐下
+            api_id = API_ID_SIT;
             break;
         case robot_base_interfaces::motion_interface::MotionMode::RECOVERY_STAND:
-            api_id = 1006; // Go2 API: 恢复站立
+            api_id = API_ID_RECOVERY_STAND;
             break;
         default:
             RCLCPP_WARN(this->get_logger(), "不支持的运动模式: %d", static_cast<int>(mode));
             return robot_base_interfaces::motion_interface::MotionResult::CAPABILITY_LIMITED;
     }
-    
+
     // 发送模式切换命令
-    success = sendGo2Command(api_id);
+    success = sendGo2ApiCommand(api_id);
     
     if (success) {
         // 更新当前运动模式
@@ -374,36 +399,36 @@ robot_base_interfaces::motion_interface::MotionResult Go2MotionController::setGa
 
 robot_base_interfaces::motion_interface::MotionResult Go2MotionController::balanceStand() {
     RCLCPP_INFO(this->get_logger(), "执行平衡站立动作");
-    bool success = sendGo2Command(1002); // Go2 API: 平衡站立
-    return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS : 
+    bool success = sendGo2ApiCommand(API_ID_BALANCE_STAND);
+    return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS :
                     robot_base_interfaces::motion_interface::MotionResult::COMMUNICATION_ERROR;
 }
 
 robot_base_interfaces::motion_interface::MotionResult Go2MotionController::standUp() {
     RCLCPP_INFO(this->get_logger(), "执行站起动作");
-    bool success = sendGo2Command(1004); // Go2 API: 站起
-    return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS : 
+    bool success = sendGo2ApiCommand(API_ID_STAND_UP);
+    return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS :
                     robot_base_interfaces::motion_interface::MotionResult::COMMUNICATION_ERROR;
 }
 
 robot_base_interfaces::motion_interface::MotionResult Go2MotionController::standDown() {
     RCLCPP_INFO(this->get_logger(), "执行趴下动作");
-    bool success = sendGo2Command(1005); // Go2 API: 趴下
-    return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS : 
+    bool success = sendGo2ApiCommand(API_ID_STAND_DOWN);
+    return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS :
                     robot_base_interfaces::motion_interface::MotionResult::COMMUNICATION_ERROR;
 }
 
 robot_base_interfaces::motion_interface::MotionResult Go2MotionController::sit() {
     RCLCPP_INFO(this->get_logger(), "执行坐下动作");
-    bool success = sendGo2Command(1009); // Go2 API: 坐下
-    return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS : 
+    bool success = sendGo2ApiCommand(API_ID_SIT);
+    return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS :
                     robot_base_interfaces::motion_interface::MotionResult::COMMUNICATION_ERROR;
 }
 
 robot_base_interfaces::motion_interface::MotionResult Go2MotionController::recoveryStand() {
     RCLCPP_INFO(this->get_logger(), "执行恢复站立动作");
-    bool success = sendGo2Command(1006); // Go2 API: 恢复站立
-    return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS : 
+    bool success = sendGo2ApiCommand(API_ID_RECOVERY_STAND);
+    return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS :
                     robot_base_interfaces::motion_interface::MotionResult::COMMUNICATION_ERROR;
 }
 
@@ -424,43 +449,43 @@ robot_base_interfaces::motion_interface::MotionResult Go2MotionController::perfo
     }
     
     RCLCPP_INFO(this->get_logger(), "执行舞蹈动作，类型: %d", dance_type);
-    bool success = sendGo2Command(api_id);
+    bool success = sendGo2ApiCommand(api_id);
     return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS : 
                     robot_base_interfaces::motion_interface::MotionResult::COMMUNICATION_ERROR;
 }
 
 robot_base_interfaces::motion_interface::MotionResult Go2MotionController::frontFlip() {
     RCLCPP_INFO(this->get_logger(), "执行前翻动作");
-    bool success = sendGo2Command(1030); // Go2 API: 前翻
+    bool success = sendGo2ApiCommand(1030); // Go2 API: 前翻
     return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS : 
                     robot_base_interfaces::motion_interface::MotionResult::COMMUNICATION_ERROR;
 }
 
 robot_base_interfaces::motion_interface::MotionResult Go2MotionController::frontJump() {
     RCLCPP_INFO(this->get_logger(), "执行前跳动作");
-    bool success = sendGo2Command(1031); // Go2 API: 前跳
+    bool success = sendGo2ApiCommand(1031); // Go2 API: 前跳
     return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS : 
                     robot_base_interfaces::motion_interface::MotionResult::COMMUNICATION_ERROR;
 }
 
 robot_base_interfaces::motion_interface::MotionResult Go2MotionController::hello() {
     RCLCPP_INFO(this->get_logger(), "执行打招呼动作");
-    bool success = sendGo2Command(1016); // Go2 API: 打招呼
+    bool success = sendGo2ApiCommand(1016); // Go2 API: 打招呼
     return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS : 
                     robot_base_interfaces::motion_interface::MotionResult::COMMUNICATION_ERROR;
 }
 
 robot_base_interfaces::motion_interface::MotionResult Go2MotionController::stretch() {
     RCLCPP_INFO(this->get_logger(), "执行伸展动作");
-    bool success = sendGo2Command(1017); // Go2 API: 伸展
+    bool success = sendGo2ApiCommand(1017); // Go2 API: 伸展
     return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS : 
                     robot_base_interfaces::motion_interface::MotionResult::COMMUNICATION_ERROR;
 }
 
 robot_base_interfaces::motion_interface::MotionResult Go2MotionController::setSpeedLevel(int level) {
     // 验证速度等级范围
-    if (level < 1 || level > 9) {
-        RCLCPP_WARN(this->get_logger(), "速度等级%d超出范围[1-9]", level);
+    if (level < 1 || level > 5) {
+        RCLCPP_WARN(this->get_logger(), "速度等级%d超出范围[1-5]", level);
         return robot_base_interfaces::motion_interface::MotionResult::INVALID_PARAMETER;
     }
     
@@ -468,7 +493,7 @@ robot_base_interfaces::motion_interface::MotionResult Go2MotionController::setSp
     
     // 构建速度等级参数字符串
     std::string parameter = std::to_string(level);
-    bool success = sendGo2Command(1015, parameter); // Go2 API: 设置速度等级
+    bool success = sendGo2ApiCommand(1015, parameter); // Go2 API: 设置速度等级
     
     return success ? robot_base_interfaces::motion_interface::MotionResult::SUCCESS : 
                     robot_base_interfaces::motion_interface::MotionResult::COMMUNICATION_ERROR;
@@ -520,86 +545,115 @@ robot_base_interfaces::motion_interface::RobotType Go2MotionController::getRobot
 
 void Go2MotionController::initializeROS2Communications() {
     RCLCPP_INFO(this->get_logger(), "初始化ROS2通信组件...");
-    
+
     // 创建Go2 API请求发布器
     api_request_pub_ = this->create_publisher<unitree_api::msg::Request>(
         "/api/sport/request",  // Go2 API话题
         10
     );
-    
-    // 创建Go2运动状态订阅器
+
+    // 创建Go2 API响应订阅器
+    api_response_sub_ = this->create_subscription<unitree_api::msg::Response>(
+        "/api/sport/response", // Go2 API响应话题
+        10,
+        std::bind(&Go2MotionController::apiResponseCallback, this, std::placeholders::_1)
+    );
+
+    // 创建Go2运动状态订阅器（通过go2_communication管理，这里保留用于兼容）
     sport_state_sub_ = this->create_subscription<unitree_go::msg::SportModeState>(
         "/sportmodestate",     // Go2状态话题
         10,
         std::bind(&Go2MotionController::sportModeStateCallback, this, std::placeholders::_1)
     );
-    
+
     // 创建ROS2标准速度命令发布器（可选，用于与其他ROS2节点兼容）
     cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(
         "/cmd_vel",
         10
     );
-    
+
     RCLCPP_INFO(this->get_logger(), "ROS2通信组件初始化完成");
 }
 
 void Go2MotionController::sportModeStateCallback(const unitree_go::msg::SportModeState::SharedPtr msg) {
-    // 将Go2原生状态转换为统一格式
-    auto new_state = convertSportStateToMotionState(msg);
-    
-    // 更新当前状态
-    {
-        std::lock_guard<std::mutex> lock(motion_state_mutex_);
-        current_motion_state_ = new_state;
-        current_error_code_ = msg->error_code;
+    // 使用消息转换器将Go2原生状态转换为统一格式
+    robot_base_interfaces::motion_interface::MotionState unified_state;
+    auto result = go2_converter_->convertSportModeState(*msg, unified_state);
+
+    if (result == robot_adapters::go2_adapter::ConversionResult::SUCCESS) {
+        // 更新当前状态
+        {
+            std::lock_guard<std::mutex> lock(motion_state_mutex_);
+            current_motion_state_ = unified_state;
+            current_error_code_ = msg->error_code;
+        }
+
+        // 触发状态变化回调
+        triggerStateCallback(unified_state);
+    } else {
+        RCLCPP_WARN(this->get_logger(), "Go2状态转换失败: %s", go2_converter_->getLastError().c_str());
     }
-    
+
     // 如果有错误，触发错误回调
     if (msg->error_code != 0) {
         std::string error_msg = "Go2系统错误代码: " + std::to_string(msg->error_code);
         triggerErrorCallback(msg->error_code, error_msg);
     }
-    
-    // 触发状态变化回调
-    triggerStateCallback(new_state);
-    
-    RCLCPP_DEBUG(this->get_logger(), "接收到Go2状态更新，模式: %d, 错误码: %d", 
+
+    RCLCPP_DEBUG(this->get_logger(), "接收到Go2状态更新，模式: %d, 错误码: %d",
                  msg->mode, msg->error_code);
 }
 
-bool Go2MotionController::sendGo2Command(uint32_t api_id, const std::string& parameter) {
+bool Go2MotionController::sendGo2ApiCommand(uint32_t api_id, const nlohmann::json& json_params) {
     // 检查发布器是否有效
     if (!api_request_pub_) {
         RCLCPP_ERROR(this->get_logger(), "Go2 API发布器未初始化");
         return false;
     }
-    
+
     // 构造Go2 API请求消息
     auto request_msg = std::make_unique<unitree_api::msg::Request>();
-    
-    // 设置请求头
-    request_msg->header.identity.id = 0;  // 请求ID
-    request_msg->header.identity.api_id = api_id;  // API ID
-    request_msg->header.lease.id = 0;  // 租约ID
-    request_msg->header.policy.priority = 0;  // 优先级
-    request_msg->header.policy.noreply = false;  // 需要回复
-    
-    // 设置API参数
-    request_msg->parameter = parameter;
-    
+
+    // 设置请求头（基于Go2通信指南的正确格式）
+    request_msg->header.identity.id = 0;
+    request_msg->header.identity.api_id = api_id;
+    request_msg->header.lease.id = 0;
+    request_msg->header.policy.priority = 0;
+    request_msg->header.policy.noreply = false;
+
+    // 设置JSON格式参数
+    request_msg->parameter = json_params.dump();
+
     // 发布命令
     api_request_pub_->publish(std::move(request_msg));
-    
+
     // 更新命令发送时间
     last_command_time_ = std::chrono::steady_clock::now();
-    
-    RCLCPP_DEBUG(this->get_logger(), "发送Go2命令: ID=%d, 参数=%s", api_id, parameter.c_str());
+
+    RCLCPP_DEBUG(this->get_logger(), "发送Go2 API命令: ID=%d, 参数=%s",
+                 api_id, json_params.dump().c_str());
     return true;
 }
 
+void Go2MotionController::apiResponseCallback(const unitree_api::msg::Response::SharedPtr msg) {
+    // 解析API响应
+    std::map<std::string, std::string> response_info;
+    auto result = go2_converter_->parseApiResponse(*msg, response_info);
+
+    if (result == robot_adapters::go2_adapter::ConversionResult::SUCCESS) {
+        RCLCPP_DEBUG(this->get_logger(), "接收到Go2 API响应，状态码: %d", msg->header.status.code);
+
+        // 检查命令执行状态
+        if (msg->header.status.code != 0) {
+            std::string error_msg = "Go2 API命令执行失败，状态码: " + std::to_string(msg->header.status.code);
+            triggerErrorCallback(msg->header.status.code, error_msg);
+        }
+    } else {
+        RCLCPP_WARN(this->get_logger(), "API响应解析失败: %s", go2_converter_->getLastError().c_str());
+    }
+}
+
 bool Go2MotionController::sendVelocityCommand(float vx, float vy, float wz) {
-    // 同时发送到Go2 API和ROS2标准话题
-    
     // 1. 发送ROS2标准Twist消息
     if (cmd_vel_pub_) {
         auto twist_msg = std::make_unique<geometry_msgs::msg::Twist>();
@@ -609,27 +663,63 @@ bool Go2MotionController::sendVelocityCommand(float vx, float vy, float wz) {
         twist_msg->angular.x = 0.0;
         twist_msg->angular.y = 0.0;
         twist_msg->angular.z = wz;
-        
+
         cmd_vel_pub_->publish(std::move(twist_msg));
     }
-    
-    // 2. 发送Go2特定的速度控制命令
-    // 这里需要根据Go2的实际API格式构造参数字符串
-    std::string velocity_params = std::to_string(vx) + "," + 
-                                 std::to_string(vy) + "," + 
-                                 std::to_string(wz);
-    
-    return sendGo2Command(1003, velocity_params); // 1003可能是Go2的速度控制API ID
+
+    // 2. 使用消息转换器构造Go2 API速度命令
+    geometry_msgs::msg::Twist twist;
+    twist.linear.x = vx;
+    twist.linear.y = vy;
+    twist.angular.z = wz;
+
+    unitree_api::msg::Request go2_request;
+    auto result = go2_converter_->convertTwistToApiRequest(twist, go2_request);
+
+    if (result == robot_adapters::go2_adapter::ConversionResult::SUCCESS) {
+        // 使用转换后的请求发送
+        api_request_pub_->publish(std::make_unique<unitree_api::msg::Request>(go2_request));
+        return true;
+    } else {
+        RCLCPP_ERROR(this->get_logger(), "速度命令转换失败: %s", go2_converter_->getLastError().c_str());
+
+        // 回退到直接使用API_ID_MOVE的JSON格式参数
+        nlohmann::json velocity_params;
+        velocity_params["x"] = vx;
+        velocity_params["y"] = vy;
+        velocity_params["z"] = wz;
+
+        return sendGo2ApiCommand(API_ID_MOVE, velocity_params);
+    }
 }
 
 bool Go2MotionController::sendPostureCommand(float roll, float pitch, float yaw, float body_height) {
-    // 构造姿态控制参数字符串
-    std::string posture_params = std::to_string(roll) + "," + 
-                                std::to_string(pitch) + "," + 
-                                std::to_string(yaw) + "," + 
-                                std::to_string(body_height);
-    
-    return sendGo2Command(1002, posture_params); // 1002可能是Go2的姿态控制API ID
+    // 使用消息转换器构造Go2姿态命令
+    robot_base_interfaces::motion_interface::Posture posture;
+    posture.roll = roll;
+    posture.pitch = pitch;
+    posture.yaw = yaw;
+    posture.body_height = body_height;
+
+    unitree_api::msg::Request go2_request;
+    auto result = go2_converter_->convertPostureCommand(posture, go2_request);
+
+    if (result == robot_adapters::go2_adapter::ConversionResult::SUCCESS) {
+        // 使用转换后的请求发送
+        api_request_pub_->publish(std::make_unique<unitree_api::msg::Request>(go2_request));
+        return true;
+    } else {
+        RCLCPP_ERROR(this->get_logger(), "姿态命令转换失败: %s", go2_converter_->getLastError().c_str());
+
+        // 回退到直接使用API_ID_EULER的JSON格式参数
+        nlohmann::json posture_params;
+        posture_params["roll"] = roll;
+        posture_params["pitch"] = pitch;
+        posture_params["yaw"] = yaw;
+        posture_params["body_height"] = body_height;
+
+        return sendGo2ApiCommand(API_ID_EULER, posture_params);
+    }
 }
 
 bool Go2MotionController::validateVelocityLimits(

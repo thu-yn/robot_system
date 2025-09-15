@@ -1,8 +1,8 @@
 /**
- * @file go2_communication.hpp
- * @brief Go2机器人通信管理器头文件
+ * @file   go2_communication.hpp
+ * @brief  Go2机器人通信管理器头文件
  * @author Yang Nan
- * @date 2025-09-10
+ * @date   2025-09-10
  *
  * @details
  * 本文件定义了 `Go2Communication` 类，这是一个专门负责管理与Go2机器人
@@ -13,42 +13,43 @@
  * 与机器人进行数据交换，同时将通信细节隔离开来。
  *
  * 主要功能：
- * - 统一的ROS2话题创建和管理。
- * - 订阅Go2机器人的状态和传感器数据（如IMU, Odometry, Lidar等）。
- * - 向Go2机器人发布控制命令（如速度指令）。
- * - 监控通信链路的健康状况，并在连接断开时自动尝试重连。
- * - 提供通信质量统计数据，如延迟、频率、丢包率等。
- * - 通过回调函数向上层传递接收到的数据和重要事件。
+ *      - 统一的ROS2话题创建和管理。
+ *      - 订阅Go2机器人的状态和传感器数据（如IMU, Odometry, Lidar等）。
+ *      - 向Go2机器人发布控制命令（如速度指令）。
+ *      - 监控通信链路的健康状况，并在连接断开时自动尝试重连。
+ *      - 提供通信质量统计数据，如延迟、频率、丢包率等。
+ *      - 通过回调函数向上层传递接收到的数据和重要事件。
  */
 
-#pragma once // 防止头文件被重复包含
+#ifndef ROBOT_ADAPTERS__GO2_ADAPTER__GO2_COMMUNICATION_HPP_
+#define ROBOT_ADAPTERS__GO2_ADAPTER__GO2_COMMUNICATION_HPP_
 
-#include <rclcpp/rclcpp.hpp> // ROS2 C++核心库
-#include <memory> // C++智能指针库
-#include <string> // C++字符串库
-#include <vector> // C++动态数组
-#include <map> // C++映射容器
-#include <functional> // C++函数对象库
-#include <mutex> // C++互斥锁，用于多线程同步
-#include <atomic> // C++原子操作库，用于线程安全的变量访问
-#include <thread> // C++线程库
-#include <queue> // C++队列容器，用于消息缓冲
-#include <chrono> // C++时间库
-#include <condition_variable> // C++条件变量，用于线程同步
+#include <rclcpp/rclcpp.hpp>    // ROS2 C++核心库
+#include <memory>               // C++智能指针库
+#include <string>               // C++字符串库
+#include <vector>               // C++动态数组
+#include <map>                  // C++映射容器
+#include <functional>           // C++函数对象库
+#include <mutex>                // C++互斥锁，用于多线程同步
+#include <atomic>               // C++原子操作库，用于线程安全的变量访问
+#include <thread>               // C++线程库
+#include <queue>                // C++队列容器，用于消息缓冲
+#include <chrono>               // C++时间库
+#include <condition_variable>   // C++条件变量，用于线程同步
 
 // 导入Unitree Go2官方定义的ROS2消息类型
-#include "unitree_go/msg/sport_mode_state.hpp" // 运动模式状态
-#include "unitree_go/msg/low_state.hpp"       // 机器人底层状态
-#include "unitree_go/msg/low_cmd.hpp"         // 机器人底层命令
-#include "unitree_go/msg/bms_state.hpp"       // 电池管理系统状态
-#include "unitree_go/msg/wireless_controller.hpp" // 无线手柄数据
-#include "unitree_api/msg/request.hpp"        // 通用API请求
+#include "unitree_go/msg/sport_mode_state.hpp"      // 运动模式状态
+#include "unitree_go/msg/low_state.hpp"             // 机器人底层状态
+#include "unitree_go/msg/low_cmd.hpp"               // 机器人底层命令
+#include "unitree_go/msg/bms_state.hpp"             // 电池管理系统状态
+#include "unitree_go/msg/wireless_controller.hpp"   // 无线手柄数据
+#include "unitree_api/msg/request.hpp"              // 通用API请求
 
 // 导入标准的ROS2消息类型
-#include <sensor_msgs/msg/point_cloud2.hpp> // 3D点云数据
-#include <sensor_msgs/msg/imu.hpp>          // 惯性测量单元数据
-#include <geometry_msgs/msg/twist.hpp>      // 速度控制指令
-#include <nav_msgs/msg/odometry.hpp>        // 里程计数据
+#include <sensor_msgs/msg/point_cloud2.hpp>         // 3D点云数据
+#include <sensor_msgs/msg/imu.hpp>                  // 惯性测量单元数据
+#include <geometry_msgs/msg/twist.hpp>              // 速度控制指令
+#include <nav_msgs/msg/odometry.hpp>                // 里程计数据
 
 namespace robot_adapters {
 namespace go2_adapter {
@@ -58,11 +59,11 @@ namespace go2_adapter {
  * @brief 定义通信连接的几种状态。
  */
 enum class CommunicationStatus {
-    DISCONNECTED = 0,      ///< 已断开：初始状态或已手动断开。
-    CONNECTING = 1,        ///< 连接中：正在尝试建立连接。
-    CONNECTED = 2,         ///< 已连接：通信链路正常。
-    RECONNECTING = 3,      ///< 重连中：连接丢失后正在尝试自动重连。
-    ERROR = 4              ///< 错误状态：发生不可恢复的通信错误。
+    DISCONNECTED = 0,   ///< 已断开：初始状态或已手动断开。
+    CONNECTING   = 1,   ///< 连接中：正在尝试建立连接。
+    CONNECTED    = 2,   ///< 已连接：通信链路正常。
+    RECONNECTING = 3,   ///< 重连中：连接丢失后正在尝试自动重连。
+    ERROR        = 4    ///< 错误状态：发生不可恢复的通信错误。
 };
 
 /**
@@ -70,15 +71,15 @@ enum class CommunicationStatus {
  * @brief 定义了本模块处理的几种主要消息类型，用于统计和缓冲管理。
  */
 enum class MessageType {
-    SPORT_MODE_STATE = 0,   ///< 运动模式状态消息
-    LOW_STATE = 1,          ///< 底层状态消息
-    LOW_COMMAND = 2,        ///< 底层命令消息
-    BMS_STATE = 3,          ///< 电池管理状态消息
-    WIRELESS_CONTROLLER = 4,///< 无线手柄消息
-    API_REQUEST = 5,        ///< API请求消息
-    POINT_CLOUD = 6,        ///< 点云数据消息
-    IMU_DATA = 7,           ///< IMU数据消息
-    ODOMETRY = 8            ///< 里程计数据消息
+    SPORT_MODE_STATE    = 0,    ///< 运动模式状态消息
+    LOW_STATE           = 1,    ///< 底层状态消息
+    LOW_COMMAND         = 2,    ///< 底层命令消息
+    BMS_STATE           = 3,    ///< 电池管理状态消息
+    WIRELESS_CONTROLLER = 4,    ///< 无线手柄消息
+    API_REQUEST         = 5,    ///< API请求消息
+    POINT_CLOUD         = 6,    ///< 点云数据消息
+    IMU_DATA            = 7,    ///< IMU数据消息
+    ODOMETRY            = 8     ///< 里程计数据消息
 };
 
 /**
@@ -86,19 +87,19 @@ enum class MessageType {
  * @brief 用于存储和报告通信质量的统计数据。
  */
 struct CommunicationStats {
-    uint64_t messages_sent = 0;         ///< 已发送的消息总数
-    uint64_t messages_received = 0;     ///< 已接收的消息总数
-    uint64_t messages_lost = 0;         ///< 估算的丢失消息数
+    uint64_t messages_sent       = 0;   ///< 已发送的消息总数
+    uint64_t messages_received   = 0;   ///< 已接收的消息总数
+    uint64_t messages_lost       = 0;   ///< 估算的丢失消息数
     uint64_t connection_attempts = 0;   ///< 尝试建立连接的总次数
-    uint64_t reconnections = 0;         ///< 成功重连的总次数
+    uint64_t reconnections       = 0;   ///< 成功重连的总次数
 
-    float average_latency_ms = 0.0f;    ///< 平均消息延迟（毫秒）
-    float message_rate_hz = 0.0f;       ///< 平均消息接收频率（赫兹）
-    uint64_t total_bytes_sent = 0;      ///< 已发送的总字节数
-    uint64_t total_bytes_received = 0;  ///< 已接收的总字节数
+    float average_latency_ms      = 0.0f;   ///< 平均消息延迟（毫秒）
+    float message_rate_hz         = 0.0f;   ///< 平均消息接收频率（赫兹）
+    uint64_t total_bytes_sent     = 0;      ///< 已发送的总字节数
+    uint64_t total_bytes_received = 0;      ///< 已接收的总字节数
 
-    std::chrono::steady_clock::time_point last_message_time; ///< 收到最后一条消息的时间点
-    std::chrono::steady_clock::time_point connection_time;   ///< 本次连接成功建立的时间点
+    std::chrono::steady_clock::time_point last_message_time;    ///< 收到最后一条消息的时间点
+    std::chrono::steady_clock::time_point connection_time;      ///< 本次连接成功建立的时间点
 };
 
 /**
@@ -204,20 +205,12 @@ public:
     // ============= 消息发布接口 =============
 
     /**
-     * @brief 发送速度控制指令。
-     * @param twist 包含线速度和角速度的`Twist`消息。
+     * @brief 发送Go2 API请求。
+     * @param request Go2机器人的API请求消息。
      * @return 如果发布成功，返回true。
+     * @details 这是Go2机器人唯一支持的控制命令发送方式，所有运动控制都必须通过此接口
      */
-    bool sendVelocityCommand(const geometry_msgs::msg::Twist& twist);
-
-    /**
-     * @brief 发送原始字节数据（未实现）。
-     * @param topic_name 目标话题。
-     * @param data 数据指针。
-     * @param size 数据大小。
-     * @return 总是返回false。
-     */
-    bool sendRawData(const std::string& topic_name, const void* data, size_t size);
+    bool sendApiRequest(const unitree_api::msg::Request& request);
 
     // ============= 消息订阅接口与回调设置 =============
 
@@ -239,6 +232,24 @@ public:
      */
     void setOdometryCallback(std::function<void(const nav_msgs::msg::Odometry::SharedPtr)> callback);
 
+    /**
+     * @brief 设置运动模式状态的回调函数。
+     * @param callback 当收到新的运动模式状态时将被调用的函数。
+     */
+    void setSportModeStateCallback(std::function<void(const unitree_go::msg::SportModeState::SharedPtr)> callback);
+
+    /**
+     * @brief 设置底层状态数据的回调函数。
+     * @param callback 当收到新的底层状态数据时将被调用的函数。
+     */
+    void setLowStateCallback(std::function<void(const unitree_go::msg::LowState::SharedPtr)> callback);
+
+    /**
+     * @brief 设置电池管理系统状态的回调函数。
+     * @param callback 当收到新的BMS状态时将被调用的函数。
+     */
+    void setBmsStateCallback(std::function<void(const unitree_go::msg::BmsState::SharedPtr)> callback);
+
     // ============= 消息缓冲与队列管理 =============
 
     /**
@@ -252,6 +263,24 @@ public:
      * @return 指向最新IMU消息的共享指针，如果缓冲区为空则返回`nullptr`。
      */
     std::shared_ptr<sensor_msgs::msg::Imu> getLatestImu();
+
+    /**
+     * @brief 获取最新收到的运动模式状态。
+     * @return 指向最新运动模式状态消息的共享指针，如果缓冲区为空则返回`nullptr`。
+     */
+    std::shared_ptr<unitree_go::msg::SportModeState> getLatestSportModeState();
+
+    /**
+     * @brief 获取最新收到的底层状态数据。
+     * @return 指向最新底层状态消息的共享指针，如果缓冲区为空则返回`nullptr`。
+     */
+    std::shared_ptr<unitree_go::msg::LowState> getLatestLowState();
+
+    /**
+     * @brief 获取最新收到的BMS状态数据。
+     * @return 指向最新BMS状态消息的共享指针，如果缓冲区为空则返回`nullptr`。
+     */
+    std::shared_ptr<unitree_go::msg::BmsState> getLatestBmsState();
 
     /**
      * @brief 设置特定消息类型的缓冲区大小。
@@ -275,9 +304,10 @@ public:
     CommunicationStats getStatistics() const;
 
     /**
-     * @brief 获取特定消息类型的端到端延迟（未实现）。
+     * @brief 获取特定消息类型的端到端延迟。
      * @param message_type 消息类型。
      * @return 延迟（毫秒），当前总是返回-1。
+     * TODO:需要实现。
      */
     float getMessageLatency(MessageType message_type) const;
 
@@ -326,8 +356,9 @@ public:
                        size_t history_depth);
 
     /**
-     * @brief 应用网络优化配置（未实现）。
+     * @brief 应用网络优化配置。
      * @return 总是返回true。
+     * TODO:需要实现。
      */
     bool applyNetworkOptimization();
 
@@ -351,14 +382,16 @@ public:
     void clearErrorHistory();
 
     /**
-     * @brief 执行连接诊断（未实现）。
+     * @brief 执行连接诊断。
      * @return 返回一个空的诊断结果map。
+     * TODO:需要实现。
      */
     std::map<std::string, bool> performConnectionDiagnostics();
 
     /**
-     * @brief 获取网络诊断信息（未实现）。
+     * @brief 获取网络诊断信息。
      * @return 返回一个空的JSON字符串。
+     * TODO:需要实现。
      */
     std::string getNetworkDiagnostics() const;
 
@@ -385,20 +418,23 @@ public:
     // ============= 配置参数 =============
 
     /**
-     * @brief 加载配置（未实现）。
+     * @brief 加载配置。
      * @return 总是返回true。
+     * TODO:需要实现。
      */
     bool loadConfiguration();
 
     /**
-     * @brief 保存配置（未实现）。
+     * @brief 保存配置。
      * @return 总是返回true。
+     * TODO:需要实现。
      */
     bool saveConfiguration();
 
     /**
-     * @brief 获取配置信息（未实现）。
+     * @brief 获取配置信息。
      * @return 返回一个空的JSON字符串。
+     * TODO:需要实现。
      */
     std::string getConfiguration() const;
 
@@ -420,27 +456,25 @@ private:
 
     // --- 网络配置 ---
     struct NetworkConfig {
-        std::string robot_ip = "192.168.123.15";           ///< Go2机器人的默认IP地址
-        std::string local_ip = "192.168.123.99";           ///< 本地设备的IP地址
-        std::string network_interface = "enp3s0";          ///< 默认使用的网络接口
-        int dds_domain_id = 0;                              ///< DDS域ID
-        int connection_timeout_ms = 10000;                  ///< 连接超时时间（毫秒）
-        int reconnect_interval_ms = 5000;                   ///< 自动重连间隔（毫秒）
-        int max_reconnect_attempts = 0;                     ///< 最大重连次数（0为无限）
+        std::string robot_ip = "192.168.123.18";    ///< Go2机器人的默认IP地址
+        std::string local_ip = "192.168.123.99";    ///< 本地设备的IP地址
+        std::string network_interface = "enp129s0"; ///< 默认使用的网络接口
+        int dds_domain_id = 0;                      ///< DDS域ID
+        int connection_timeout_ms = 10000;          ///< 连接超时时间（毫秒）
+        int reconnect_interval_ms = 5000;           ///< 自动重连间隔（毫秒）
+        int max_reconnect_attempts = 0;             ///< 最大重连次数（0为无限）
     } network_config_;
 
     // --- ROS2 发布者与订阅者 ---
-    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_; // 速度指令发布者
-    // 以下是为Go2特定消息预留的接口，当前被注释
-    // rclcpp::Publisher<unitree_api::msg::Request>::SharedPtr api_request_pub_;
-    // rclcpp::Publisher<unitree_go::msg::LowCmd>::SharedPtr low_cmd_pub_;
+    // Go2机器人唯一支持的控制命令发布者
+    rclcpp::Publisher<unitree_api::msg::Request>::SharedPtr api_request_pub_;
 
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_sub_; // 点云订阅者
-    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;             // IMU订阅者
-    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;          // 里程计订阅者
-    // rclcpp::Subscription<unitree_go::msg::SportModeState>::SharedPtr sport_state_sub_;
-    // rclcpp::Subscription<unitree_go::msg::LowState>::SharedPtr low_state_sub_;
-    // rclcpp::Subscription<unitree_go::msg::BmsState>::SharedPtr bms_state_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr   pointcloud_sub_;   // 点云订阅者
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr           imu_sub_;          // IMU订阅者
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr         odom_sub_;         // 里程计订阅者
+    rclcpp::Subscription<unitree_go::msg::SportModeState>::SharedPtr sport_state_sub_;
+    rclcpp::Subscription<unitree_go::msg::LowState>::SharedPtr       low_state_sub_;
+    rclcpp::Subscription<unitree_go::msg::BmsState>::SharedPtr       bms_state_sub_;
 
     // --- 定时器 ---
     rclcpp::TimerBase::SharedPtr monitor_timer_;          ///< 用于监控连接状态的定时器
@@ -448,14 +482,14 @@ private:
     rclcpp::TimerBase::SharedPtr statistics_timer_;       ///< 用于更新统计数据的定时器
 
     // --- 消息缓冲区 ---
-    mutable std::mutex buffer_mutex_; ///< 用于保护消息缓冲区的互斥锁
-    std::map<MessageType, size_t> buffer_sizes_; ///< 存储不同消息类型的缓冲区大小
-    std::queue<std::shared_ptr<sensor_msgs::msg::PointCloud2>> pointcloud_buffer_; ///< 点云消息队列
-    std::queue<std::shared_ptr<sensor_msgs::msg::Imu>> imu_buffer_;             ///< IMU消息队列
-    std::queue<std::shared_ptr<nav_msgs::msg::Odometry>> odom_buffer_;          ///< 里程计消息队列
-    // std::queue<std::shared_ptr<unitree_go::msg::SportModeState>> sport_state_buffer_;
-    // std::queue<std::shared_ptr<unitree_go::msg::LowState>> low_state_buffer_;
-    // std::queue<std::shared_ptr<unitree_go::msg::BmsState>> bms_state_buffer_;
+    mutable std::mutex buffer_mutex_;               ///< 用于保护消息缓冲区的互斥锁
+    std::map<MessageType, size_t> buffer_sizes_;    ///< 存储不同消息类型的缓冲区大小
+    std::queue<std::shared_ptr<sensor_msgs::msg::PointCloud2>>   pointcloud_buffer_;    ///< 点云消息队列
+    std::queue<std::shared_ptr<sensor_msgs::msg::Imu>>           imu_buffer_;           ///< IMU消息队列
+    std::queue<std::shared_ptr<nav_msgs::msg::Odometry>>         odom_buffer_;          ///< 里程计消息队列
+    std::queue<std::shared_ptr<unitree_go::msg::SportModeState>> sport_state_buffer_;
+    std::queue<std::shared_ptr<unitree_go::msg::LowState>>       low_state_buffer_;
+    std::queue<std::shared_ptr<unitree_go::msg::BmsState>>       bms_state_buffer_;
 
     // --- 统计信息 ---
     mutable std::mutex stats_mutex_; ///< 用于保护统计数据的互斥锁
@@ -464,28 +498,28 @@ private:
     std::map<MessageType, float> message_frequencies_; ///< 记录各类消息的接收频率
 
     // --- 错误管理 ---
-    mutable std::mutex error_mutex_; ///< 用于保护错误记录的互斥锁
-    std::string last_error_;         ///< 最后一条错误信息
-    std::vector<std::string> error_history_; ///< 错误历史记录
+    mutable std::mutex error_mutex_;            ///< 用于保护错误记录的互斥锁
+    std::string last_error_;                    ///< 最后一条错误信息
+    std::vector<std::string> error_history_;    ///< 错误历史记录
 
     // --- 外部回调函数 ---
-    std::function<void(const sensor_msgs::msg::PointCloud2::SharedPtr)> pointcloud_callback_;
-    std::function<void(const sensor_msgs::msg::Imu::SharedPtr)> imu_callback_;
-    std::function<void(const nav_msgs::msg::Odometry::SharedPtr)> odom_callback_;
-    // std::function<void(const unitree_go::msg::SportModeState::SharedPtr)> sport_state_callback_;
-    // std::function<void(const unitree_go::msg::LowState::SharedPtr)> low_state_callback_;
-    // std::function<void(const unitree_go::msg::BmsState::SharedPtr)> bms_state_callback_;
+    std::function<void(const sensor_msgs::msg::PointCloud2::SharedPtr)>   pointcloud_callback_;
+    std::function<void(const sensor_msgs::msg::Imu::SharedPtr)>           imu_callback_;
+    std::function<void(const nav_msgs::msg::Odometry::SharedPtr)>         odom_callback_;
+    std::function<void(const unitree_go::msg::SportModeState::SharedPtr)> sport_state_callback_;
+    std::function<void(const unitree_go::msg::LowState::SharedPtr)>       low_state_callback_;
+    std::function<void(const unitree_go::msg::BmsState::SharedPtr)>       bms_state_callback_;
 
     std::function<void(CommunicationStatus)> status_callback_; ///< 连接状态变化回调
     std::function<void(const std::string&)> error_callback_;   ///< 错误事件回调
     std::function<void(float)> quality_callback_;              ///< 通信质量变化回调
 
     // --- 重连管理 ---
-    std::thread reconnect_thread_;      ///< 执行重连逻辑的独立线程
-    std::atomic<bool> should_reconnect_;///< 控制重连线程是否继续运行的标志
-    std::condition_variable reconnect_cv_; ///< 用于唤醒重连线程的条件变量
-    std::mutex reconnect_mutex_;        ///< 与条件变量配合使用的互斥锁
-    int reconnect_attempts_;            ///< 当前的重连尝试次数
+    std::thread reconnect_thread_;              ///< 执行重连逻辑的独立线程
+    std::atomic<bool> should_reconnect_;        ///< 控制重连线程是否继续运行的标志
+    std::condition_variable reconnect_cv_;      ///< 用于唤醒重连线程的条件变量
+    std::mutex reconnect_mutex_;                ///< 与条件变量配合使用的互斥锁
+    int reconnect_attempts_;                    ///< 当前的重连尝试次数
 
     // ============= 内部私有方法 =============
 
@@ -504,9 +538,9 @@ private:
     void pointcloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
     void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg);
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
-    // void sportStateCallback(const unitree_go::msg::SportModeState::SharedPtr msg);
-    // void lowStateCallback(const unitree_go::msg::LowState::SharedPtr msg);
-    // void bmsStateCallback(const unitree_go::msg::BmsState::SharedPtr msg);
+    void sportStateCallback(const unitree_go::msg::SportModeState::SharedPtr msg);
+    void lowStateCallback(const unitree_go::msg::LowState::SharedPtr msg);
+    void bmsStateCallback(const unitree_go::msg::BmsState::SharedPtr msg);
 
     // --- 内部定时器回调 ---
     void monitorTimerCallback();
@@ -578,3 +612,4 @@ using Go2CommunicationUniquePtr = std::unique_ptr<Go2Communication>; ///< Go2Com
 
 } // namespace go2_adapter
 } // namespace robot_adapters
+#endif // ROBOT_ADAPTERS__GO2_ADAPTER__GO2_COMMUNICATION_HPP_

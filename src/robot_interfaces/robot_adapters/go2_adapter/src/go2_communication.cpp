@@ -1,8 +1,8 @@
 /**
- * @file go2_communication.cpp
- * @brief Go2机器人通信管理器实现文件
+ * @file   go2_communication.cpp
+ * @brief  Go2机器人通信管理器实现文件
  * @author Yang Nan
- * @date 2025-09-10
+ * @date   2025-09-10
  *
  * @details
  * 本文件包含了 `Go2Communication` 类的所有方法的具体实现。
@@ -12,10 +12,11 @@
  */
 
 #include "robot_adapters/go2_adapter/go2_communication.hpp" // 引入对应的头文件
-#include <std_msgs/msg/string.hpp> // 引入标准字符串消息，用于原始数据发送的示例
-#include <chrono> // C++时间库
-#include <sstream> // C++字符串流库，用于构建字符串
-#include <iomanip> // C++输入/输出操纵器，用于格式化输出（如十六进制）
+
+#include <std_msgs/msg/string.hpp>  // 引入标准字符串消息，用于原始数据发送的示例
+#include <chrono>                   // C++时间库
+#include <sstream>                  // C++字符串流库，用于构建字符串
+#include <cstdlib>                  // 使用 std::system 执行 ping 命令
 
 namespace robot_adapters {
 namespace go2_adapter {
@@ -40,14 +41,14 @@ Go2Communication::Go2Communication(std::shared_ptr<rclcpp::Node> node)
 
     // 为不同类型的消息设置默认的缓冲区大小
     buffer_sizes_[MessageType::SPORT_MODE_STATE] = 10;
-    buffer_sizes_[MessageType::LOW_STATE] = 10;
-    buffer_sizes_[MessageType::BMS_STATE] = 10;
-    buffer_sizes_[MessageType::POINT_CLOUD] = 5; // 点云数据量大，缓冲区不宜过大
-    buffer_sizes_[MessageType::IMU_DATA] = 20;
-    buffer_sizes_[MessageType::ODOMETRY] = 10;
+    buffer_sizes_[MessageType::LOW_STATE]        = 10;
+    buffer_sizes_[MessageType::BMS_STATE]        = 10;
+    buffer_sizes_[MessageType::POINT_CLOUD]      = 5; // 点云数据量大，缓冲区不宜过大
+    buffer_sizes_[MessageType::IMU_DATA]         = 20;
+    buffer_sizes_[MessageType::ODOMETRY]         = 10;
 
     // 初始化统计数据的时间戳
-    stats_.connection_time = std::chrono::steady_clock::now();
+    stats_.connection_time   = std::chrono::steady_clock::now();
     stats_.last_message_time = std::chrono::steady_clock::now();
 
     logInfo("Go2Communication object created.");
@@ -69,11 +70,11 @@ Go2Communication::~Go2Communication() {
  *
  * @details
  * 这是设置通信模块的核心函数，它执行以下操作：
- * 1. 配置网络参数（当前为占位符）。
- * 2. 创建所有必需的ROS2发布者和订阅者。
- * 3. 创建用于监控连接和更新统计数据的定时器。
- * 4. 如果启用了自动重连，则启动一个后台线程来处理重连逻辑。
- * 5. 将状态更新为已初始化和已连接。
+ *      1. 配置网络参数（当前为占位符）。
+ *      2. 创建所有必需的ROS2发布者和订阅者。
+ *      3. 创建用于监控连接和更新统计数据的定时器。
+ *      4. 如果启用了自动重连，则启动一个后台线程来处理重连逻辑。
+ *      5. 将状态更新为已初始化和已连接。
  */
 bool Go2Communication::initialize() {
     logInfo("Initializing Go2Communication module...");
@@ -165,6 +166,9 @@ bool Go2Communication::shutdown() {
             while (!pointcloud_buffer_.empty()) pointcloud_buffer_.pop();
             while (!imu_buffer_.empty()) imu_buffer_.pop();
             while (!odom_buffer_.empty()) odom_buffer_.pop();
+            while (!sport_state_buffer_.empty()) sport_state_buffer_.pop();
+            while (!low_state_buffer_.empty()) low_state_buffer_.pop();
+            while (!bms_state_buffer_.empty()) bms_state_buffer_.pop();
         }
 
         is_initialized_.store(false);
@@ -284,77 +288,25 @@ void Go2Communication::setAutoReconnect(bool enable, int retry_interval_ms, int 
 // ============= 消息发布接口实现 =============
 
 /**
- * @brief 发送速度指令
+ * @brief 发送Go2 API请求
+ * @param request Go2机器人的API请求消息
+ * @return 如果发布成功，返回true
  */
-bool Go2Communication::sendVelocityCommand(const geometry_msgs::msg::Twist& twist) {
-    if (!isConnected() || !cmd_vel_pub_) {
-        recordError("Failed to send velocity command: Not connected or publisher not created.");
+bool Go2Communication::sendApiRequest(const unitree_api::msg::Request& request) {
+    if (!isConnected() || !api_request_pub_) {
+        recordError("Failed to send API request: Not connected or API publisher not created.");
         return false;
     }
     try {
-        cmd_vel_pub_->publish(twist);
-        updateStatistics(MessageType::LOW_COMMAND, sizeof(twist)); // 更新统计
-        logDebug("Velocity command sent successfully.");
+        api_request_pub_->publish(request);
+        updateStatistics(MessageType::API_REQUEST, sizeof(request));
+        logDebug("API request sent successfully.");
         return true;
     } catch (const std::exception& e) {
-        recordError("Exception while sending velocity command: " + std::string(e.what()));
+        recordError("Exception while sending API request: " + std::string(e.what()));
         return false;
     }
 }
-
-/**
- * @brief 发送原始数据（示例实现）
- * @details 将任意字节数据打包成十六进制字符串，并通过一个临时的`std_msgs/String`发布者发送。
- *          这主要用于调试或特殊用途，不适用于高性能场景。
- */
-bool Go2Communication::sendRawData(const std::string& topic_name, const void* data, size_t size) {
-    if (!is_initialized_) {
-        recordError("Communication manager not initialized.");
-        return false;
-    }
-    if (!data || size == 0) {
-        recordError("Data is null or size is zero.");
-        return false;
-    }
-    if (topic_name.empty()) {
-        recordError("Topic name is empty.");
-        return false;
-    }
-
-    try {
-        // 将原始字节数据转换为十六进制字符串
-        std::ostringstream hex_stream;
-        hex_stream << std::hex << std::uppercase << std::setfill('0');
-        const auto* byte_data = static_cast<const uint8_t*>(data);
-        for (size_t i = 0; i < size; ++i) {
-            hex_stream << std::setw(2) << static_cast<int>(byte_data[i]);
-        }
-
-        auto raw_msg = std::make_unique<std_msgs::msg::String>();
-        raw_msg->data = hex_stream.str();
-
-        // 创建一个临时的发布者来发送一次性消息
-        auto raw_pub = node_->create_publisher<std_msgs::msg::String>(topic_name, 10);
-        raw_pub->publish(*raw_msg);
-
-        // 更新发送统计
-        {
-            std::lock_guard<std::mutex> lock(stats_mutex_);
-            stats_.messages_sent++;
-            stats_.total_bytes_sent += size;
-            stats_.last_message_time = std::chrono::steady_clock::now();
-        }
-
-        RCLCPP_DEBUG(node_->get_logger(), "Raw data sent to topic %s, size: %zu bytes",
-                     topic_name.c_str(), size);
-        return true;
-
-    } catch (const std::exception& e) {
-        recordError("Exception while sending raw data: " + std::string(e.what()));
-        return false;
-    }
-}
-
 
 // ============= 消息订阅与缓冲管理实现 =============
 
@@ -380,6 +332,27 @@ void Go2Communication::setOdometryCallback(std::function<void(const nav_msgs::ms
 }
 
 /**
+ * @brief 设置运动模式状态回调函数
+ */
+void Go2Communication::setSportModeStateCallback(std::function<void(const unitree_go::msg::SportModeState::SharedPtr)> callback) {
+    sport_state_callback_ = callback;
+}
+
+/**
+ * @brief 设置底层状态回调函数
+ */
+void Go2Communication::setLowStateCallback(std::function<void(const unitree_go::msg::LowState::SharedPtr)> callback) {
+    low_state_callback_ = callback;
+}
+
+/**
+ * @brief 设置BMS状态回调函数
+ */
+void Go2Communication::setBmsStateCallback(std::function<void(const unitree_go::msg::BmsState::SharedPtr)> callback) {
+    bms_state_callback_ = callback;
+}
+
+/**
  * @brief 获取最新的点云消息
  */
 std::shared_ptr<sensor_msgs::msg::PointCloud2> Go2Communication::getLatestPointCloud() {
@@ -397,6 +370,39 @@ std::shared_ptr<sensor_msgs::msg::Imu> Go2Communication::getLatestImu() {
     std::lock_guard<std::mutex> lock(buffer_mutex_);
     if (!imu_buffer_.empty()) {
         return imu_buffer_.back();
+    }
+    return nullptr;
+}
+
+/**
+ * @brief 获取最新的运动模式状态消息
+ */
+std::shared_ptr<unitree_go::msg::SportModeState> Go2Communication::getLatestSportModeState() {
+    std::lock_guard<std::mutex> lock(buffer_mutex_);
+    if (!sport_state_buffer_.empty()) {
+        return sport_state_buffer_.back();
+    }
+    return nullptr;
+}
+
+/**
+ * @brief 获取最新的底层状态消息
+ */
+std::shared_ptr<unitree_go::msg::LowState> Go2Communication::getLatestLowState() {
+    std::lock_guard<std::mutex> lock(buffer_mutex_);
+    if (!low_state_buffer_.empty()) {
+        return low_state_buffer_.back();
+    }
+    return nullptr;
+}
+
+/**
+ * @brief 获取最新的BMS状态消息
+ */
+std::shared_ptr<unitree_go::msg::BmsState> Go2Communication::getLatestBmsState() {
+    std::lock_guard<std::mutex> lock(buffer_mutex_);
+    if (!bms_state_buffer_.empty()) {
+        return bms_state_buffer_.back();
     }
     return nullptr;
 }
@@ -425,10 +431,22 @@ void Go2Communication::clearMessageBuffer(MessageType message_type) {
         case MessageType::ODOMETRY:
             std::queue<std::shared_ptr<nav_msgs::msg::Odometry>>().swap(odom_buffer_);
             break;
+        case MessageType::SPORT_MODE_STATE:
+            std::queue<std::shared_ptr<unitree_go::msg::SportModeState>>().swap(sport_state_buffer_);
+            break;
+        case MessageType::LOW_STATE:
+            std::queue<std::shared_ptr<unitree_go::msg::LowState>>().swap(low_state_buffer_);
+            break;
+        case MessageType::BMS_STATE:
+            std::queue<std::shared_ptr<unitree_go::msg::BmsState>>().swap(bms_state_buffer_);
+            break;
         default: // 如果类型不匹配，则清空所有缓冲区作为默认行为
             std::queue<std::shared_ptr<sensor_msgs::msg::PointCloud2>>().swap(pointcloud_buffer_);
             std::queue<std::shared_ptr<sensor_msgs::msg::Imu>>().swap(imu_buffer_);
             std::queue<std::shared_ptr<nav_msgs::msg::Odometry>>().swap(odom_buffer_);
+            std::queue<std::shared_ptr<unitree_go::msg::SportModeState>>().swap(sport_state_buffer_);
+            std::queue<std::shared_ptr<unitree_go::msg::LowState>>().swap(low_state_buffer_);
+            std::queue<std::shared_ptr<unitree_go::msg::BmsState>>().swap(bms_state_buffer_);
             break;
     }
 }
@@ -564,7 +582,7 @@ std::map<std::string, bool> Go2Communication::performConnectionDiagnostics() {
     diagnostics["IsInitialized"] = is_initialized_.load();
     diagnostics["IsConnected"] = isConnected();
     diagnostics["HasValidNode"] = (node_ != nullptr);
-    diagnostics["CmdVelPublisherCreated"] = (cmd_vel_pub_ != nullptr);
+    diagnostics["ApiRequestPublisherCreated"] = (api_request_pub_ != nullptr);
     diagnostics["PointCloudSubscriberCreated"] = (pointcloud_sub_ != nullptr);
     diagnostics["ImuSubscriberCreated"] = (imu_sub_ != nullptr);
     return diagnostics;
@@ -576,11 +594,11 @@ std::map<std::string, bool> Go2Communication::performConnectionDiagnostics() {
 std::string Go2Communication::getNetworkDiagnostics() const {
     std::ostringstream ss;
     ss << "{"
-       << "  \"robot_ip\": \"" << network_config_.robot_ip << "\",\n"
-       << "  \"local_ip\": \"" << network_config_.local_ip << "\",\n"
+       << "  \"robot_ip\": \""          << network_config_.robot_ip          << "\",\n"
+       << "  \"local_ip\": \""          << network_config_.local_ip          << "\",\n"
        << "  \"network_interface\": \"" << network_config_.network_interface << "\",\n"
-       << "  \"dds_domain_id\": " << network_config_.dds_domain_id << ",\n"
-       << "  \"connection_status\": " << static_cast<int>(status_.load()) << "\n"
+       << "  \"dds_domain_id\": "       << network_config_.dds_domain_id     << ",\n"
+       << "  \"connection_status\": "   << static_cast<int>(status_.load())  << "\n"
        << "}";
     return ss.str();
 }
@@ -631,12 +649,20 @@ void Go2Communication::setVerboseLogging(bool enable) {
 bool Go2Communication::createPublishersAndSubscribers() {
     try {
         // 为传感器数据使用BestEffort QoS，因为它们是高频数据，丢失一两帧影响不大
-        auto sensor_qos = rclcpp::QoS(10).reliability(rclcpp::ReliabilityPolicy::BestEffort);
-        // 为命令数据使用Reliable QoS，确保命令能被接收
-        auto cmd_qos = rclcpp::QoS(10).reliability(rclcpp::ReliabilityPolicy::Reliable);
+        // 增加历史深度为1以减少内存使用，设置大的资源限制以支持Go2的大消息
+        auto sensor_qos = rclcpp::QoS(1)
+            .reliability(rclcpp::ReliabilityPolicy::BestEffort)
+            .durability(rclcpp::DurabilityPolicy::Volatile)
+            .history(rclcpp::HistoryPolicy::KeepLast);
 
-        // 创建发布者
-        cmd_vel_pub_ = node_->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", cmd_qos);
+        // 为命令数据使用Reliable QoS，确保命令能被接收
+        auto cmd_qos = rclcpp::QoS(1)
+            .reliability(rclcpp::ReliabilityPolicy::Reliable)
+            .durability(rclcpp::DurabilityPolicy::Volatile)
+            .history(rclcpp::HistoryPolicy::KeepLast);
+
+        // 创建发布者 - Go2机器人唯一支持的控制命令接口
+        api_request_pub_ = node_->create_publisher<unitree_api::msg::Request>("/api/sport/request", cmd_qos);
 
         // 创建订阅者
         pointcloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -651,6 +677,19 @@ bool Go2Communication::createPublishersAndSubscribers() {
             "/odom", sensor_qos,
             std::bind(&Go2Communication::odomCallback, this, std::placeholders::_1));
 
+        // 创建Go2特定的状态订阅者
+        sport_state_sub_ = node_->create_subscription<unitree_go::msg::SportModeState>(
+            "sportmodestate", sensor_qos,  // 高频状态话题
+            std::bind(&Go2Communication::sportStateCallback, this, std::placeholders::_1));
+
+        low_state_sub_ = node_->create_subscription<unitree_go::msg::LowState>(
+            "lowstate", sensor_qos,  // 高频底层状态话题
+            std::bind(&Go2Communication::lowStateCallback, this, std::placeholders::_1));
+
+        bms_state_sub_ = node_->create_subscription<unitree_go::msg::BmsState>(
+            "bms_state", sensor_qos,  // BMS状态话题
+            std::bind(&Go2Communication::bmsStateCallback, this, std::placeholders::_1));
+
         logInfo("Publishers and subscribers created successfully.");
         return true;
 
@@ -664,10 +703,13 @@ bool Go2Communication::createPublishersAndSubscribers() {
  * @brief 销毁所有ROS2发布者和订阅者
  */
 void Go2Communication::destroyPublishersAndSubscribers() {
-    cmd_vel_pub_.reset();
+    api_request_pub_.reset();
     pointcloud_sub_.reset();
     imu_sub_.reset();
     odom_sub_.reset();
+    sport_state_sub_.reset();
+    low_state_sub_.reset();
+    bms_state_sub_.reset();
     logInfo("Publishers and subscribers destroyed.");
 }
 
@@ -719,6 +761,51 @@ void Go2Communication::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg
     logDebug("Odometry message received.");
 }
 
+/**
+ * @brief 运动模式状态消息回调
+ */
+void Go2Communication::sportStateCallback(const unitree_go::msg::SportModeState::SharedPtr msg) {
+    updateStatistics(MessageType::SPORT_MODE_STATE, sizeof(*msg));
+    {
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
+        manageBuffer(sport_state_buffer_, msg, buffer_sizes_[MessageType::SPORT_MODE_STATE]);
+    }
+    if (sport_state_callback_) {
+        sport_state_callback_(msg);
+    }
+    logDebug("SportModeState message received.");
+}
+
+/**
+ * @brief 底层状态消息回调
+ */
+void Go2Communication::lowStateCallback(const unitree_go::msg::LowState::SharedPtr msg) {
+    updateStatistics(MessageType::LOW_STATE, sizeof(*msg));
+    {
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
+        manageBuffer(low_state_buffer_, msg, buffer_sizes_[MessageType::LOW_STATE]);
+    }
+    if (low_state_callback_) {
+        low_state_callback_(msg);
+    }
+    logDebug("LowState message received.");
+}
+
+/**
+ * @brief BMS状态消息回调
+ */
+void Go2Communication::bmsStateCallback(const unitree_go::msg::BmsState::SharedPtr msg) {
+    updateStatistics(MessageType::BMS_STATE, sizeof(*msg));
+    {
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
+        manageBuffer(bms_state_buffer_, msg, buffer_sizes_[MessageType::BMS_STATE]);
+    }
+    if (bms_state_callback_) {
+        bms_state_callback_(msg);
+    }
+    logDebug("BmsState message received.");
+}
+
 
 // ============= 定时器回调实现 =============
 
@@ -763,6 +850,7 @@ void Go2Communication::statisticsTimerCallback() {
     // 计算每种消息的频率
     for (auto const& [type, last_time] : last_message_times_) {
         // 这是一个简化的频率计算，更精确的实现需要记录一段时间内的消息数量
+        // TODO
     }
 
     float quality_score = calculateQualityScore();
@@ -922,8 +1010,21 @@ bool Go2Communication::verifyNetworkConnection() {
         recordError("ROS node is invalid.");
         return false;
     }
-    // 实际应用中可以加入ping测试或检查ROS2守护进程状态
-    return true;
+    // 基于 ping 的连通性检测（Linux）
+    if (network_config_.robot_ip.empty()) {
+        recordError("Robot IP is empty. Cannot perform ping test.");
+        return false;
+    }
+
+    std::string ping_command = "ping -c 1 -W 1 " + network_config_.robot_ip + " > /dev/null 2>&1";
+    int ping_result = std::system(ping_command.c_str());
+    if (ping_result == 0) {
+        logDebug("Ping to robot succeeded.");
+        return true;
+    } else {
+        recordError("Ping to robot failed: " + network_config_.robot_ip);
+        return false;
+    }
 }
 
 

@@ -185,6 +185,7 @@ public:
      * @return 创建结果
      */
     AdapterCreationResult createSpotAdapter(const AdapterCreationConfig& config = AdapterCreationConfig()) {
+        (void) config;
         AdapterCreationResult result(false, "Spot adapter not yet implemented");
         result.error_code = -1;
         result.detected_robot_type = RobotType::SPOT;

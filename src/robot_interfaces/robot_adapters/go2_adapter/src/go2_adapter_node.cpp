@@ -5,7 +5,6 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <memory>
-#include <iostream>
 
 #include "robot_adapters/go2_adapter/go2_adapter.hpp"
 

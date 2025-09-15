@@ -184,16 +184,18 @@ target_include_directories(go2_adapter_node PUBLIC
 ament_target_dependencies(go2_adapter_node ${DEPENDENCIES})
 target_link_libraries(go2_adapter_node go2_adapter_lib)
 
-# Go2运动控制测试节点
-add_executable(go2_motion_test_node
-  src/go2_motion_test_node.cpp
+# ========== 示例程序构建 ==========
+
+# Go2通信功能验证示例
+add_executable(go2_communication_test
+  examples/test_go2_communication.cpp
 )
-target_include_directories(go2_motion_test_node PUBLIC
+target_include_directories(go2_communication_test PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-ament_target_dependencies(go2_motion_test_node ${DEPENDENCIES})
-target_link_libraries(go2_motion_test_node go2_motion_controller go2_quadruped_tricks)
+ament_target_dependencies(go2_communication_test ${DEPENDENCIES})
+target_link_libraries(go2_communication_test go2_communication)
 
 # ========== 单元测试构建 ==========
 # 暂时禁用测试以完成基本构建
@@ -254,7 +256,7 @@ install(TARGETS
 # 安装可执行文件
 install(TARGETS
   go2_adapter_node
-  go2_motion_test_node
+  go2_communication_test
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -275,6 +277,13 @@ install(DIRECTORY
 install(DIRECTORY
   config/
   DESTINATION share/${PROJECT_NAME}/config
+  OPTIONAL
+)
+
+# 安装示例文件
+install(DIRECTORY
+  examples/
+  DESTINATION share/${PROJECT_NAME}/examples
   OPTIONAL
 )
 

@@ -354,6 +354,8 @@ void RobotAdapterFactory::setupEnvironmentVariables(const AdapterCreationConfig&
 void RobotAdapterFactory::updateStatistics(RobotType robot_type, bool success) const {
     // 统计信息在类成员变量中更新，这里可以添加额外的统计逻辑
     // 例如记录到日志文件或发送统计事件等
+    (void) robot_type;
+    (void) success;
 }
 
 void RobotAdapterFactory::setLastError(const std::string& error_message) const {

@@ -6,7 +6,7 @@
  */
 
 #include "robot_adapters/go2_adapter/go2_power_manager.hpp"
-#include <std_msgs/msg/string.hpp>
+#include "unitree_api/msg/request.hpp"
 #include <sstream>
 #include <iomanip>
 #include <fstream>
@@ -17,14 +17,18 @@
 namespace robot_adapters {
 namespace go2_adapter {
 
-Go2PowerManager::Go2PowerManager(std::shared_ptr<rclcpp::Node> node) 
-    : node_(node), 
+Go2PowerManager::Go2PowerManager(std::shared_ptr<rclcpp::Node> node)
+    : node_(node),
       is_initialized_(false),
       is_operational_(false) {
-    
+
+    // 初始化Go2通信管理器和消息转换器
+    go2_comm_ = std::make_shared<Go2Communication>(node);
+    converter_ = std::make_shared<Go2MessageConverter>();
+
     // 初始化统计数据开始时间
     statistics_.start_time = std::chrono::steady_clock::now();
-    
+
     // 初始化电池状态默认值(Go2典型值)
     battery_state_.voltage = 24.0f;
     battery_state_.current = 0.0f;
@@ -32,35 +36,31 @@ Go2PowerManager::Go2PowerManager(std::shared_ptr<rclcpp::Node> node)
     battery_state_.percentage = 100.0f;
     battery_state_.cycles = 0;
     battery_state_.cell_voltages.resize(15, 3.6f); // Go2有15个电芯
-    
+
     // 初始化充电状态
     charging_state_.state = robot_base_interfaces::power_interface::ChargingState::NOT_CHARGING;
     charging_state_.type = robot_base_interfaces::power_interface::ChargingType::WIRELESS;
-    
+
     logInfo("Go2PowerManager构造完成");
 }
 
-void Go2PowerManager::setupRosInterfaces() {
-    logInfo("设置ROS接口");
-    
+void Go2PowerManager::setupGo2Communication() {
+    logInfo("设置Go2通信和消息转换器");
+
     try {
-        // 创建BMS状态订阅者 (模拟Go2的/bms_state话题)
-        bms_subscriber_ = node_->create_subscription<std_msgs::msg::String>(
-            "/bms_state", 10,
+        // 初始化Go2通信管理器
+        if (!go2_comm_->initialize()) {
+            logError("Go2Communication初始化失败");
+            throw std::runtime_error("Go2Communication初始化失败");
+        }
+
+        // 设置BMS状态回调
+        go2_comm_->setBmsStateCallback(
             std::bind(&Go2PowerManager::bmsStateCallback, this, std::placeholders::_1));
-        
-        // 创建无线控制器订阅者
-        wireless_controller_subscriber_ = node_->create_subscription<std_msgs::msg::String>(
-            "/wirelesscontroller", 10,
-            std::bind(&Go2PowerManager::wirelessControllerCallback, this, std::placeholders::_1));
-        
-        // 创建命令发布者 (模拟Go2的/api/sport/request话题)
-        command_publisher_ = node_->create_publisher<std_msgs::msg::String>(
-            "/api/sport/request", 10);
-        
-        logInfo("ROS接口创建成功");
+
+        logInfo("Go2通信接口设置成功");
     } catch (const std::exception& e) {
-        logError("创建ROS接口失败: " + std::string(e.what()));
+        logError("设置Go2通信失败: " + std::string(e.what()));
         throw;
     }
 }
@@ -96,8 +96,8 @@ bool Go2PowerManager::initialize() {
             std::chrono::seconds(10),
             std::bind(&Go2PowerManager::statisticsTimerCallback, this));
         
-        // 4. 创建ROS订阅者和发布者
-        setupRosInterfaces();
+        // 4. 设置Go2通信和消息转换器
+        setupGo2Communication();
         
         // 5. 初始化电池状态数据
         battery_state_.last_update_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -134,7 +134,12 @@ bool Go2PowerManager::shutdown() {
         if (isCharging()) {
             requestStopCharging();
         }
-        
+
+        // 关闭Go2通信
+        if (go2_comm_) {
+            go2_comm_->shutdown();
+        }
+
         is_operational_.store(false);
         is_initialized_.store(false);
         
@@ -662,6 +667,13 @@ std::string Go2PowerManager::getConfiguration() const {
 
 // ============= Go2特有功能 =============
 
+std::shared_ptr<unitree_go::msg::BmsState> Go2PowerManager::getNativeBmsState() const {
+    if (go2_comm_) {
+        return go2_comm_->getLatestBmsState();
+    }
+    return nullptr;
+}
+
 bool Go2PowerManager::setGo2ChargingMode(bool enable) {
     logInfo("设置Go2充电模式: " + std::string(enable ? "启用" : "禁用"));
     return sendGo2ChargeCommand(enable);
@@ -902,31 +914,40 @@ void Go2PowerManager::checkBatteryEvents() {
 
 bool Go2PowerManager::sendGo2ChargeCommand(bool enable) {
     logInfo("发送Go2充电命令: " + std::string(enable ? "开始" : "停止"));
-    
+
     try {
-        if (!command_publisher_) {
-            logError("命令发布者未初始化");
+        if (!go2_comm_) {
+            logError("Go2通信管理器未初始化");
             return false;
         }
-        
-        // 创建简单格式的充电命令
-        std::ostringstream command_stream;
-        command_stream << "CHARGE_CMD:";
-        command_stream << "enable=" << (enable ? "true" : "false") << ";";
-        command_stream << "mode=wireless;";
-        command_stream << "api_id=1001;";
-        command_stream << "timestamp=" << std::chrono::duration_cast<std::chrono::nanoseconds>(
+
+        // 创建API请求消息
+        unitree_api::msg::Request request;
+
+        // 设置API请求头
+        request.header.identity.api_id = enable ? 3001 : 3002; // 假设的充电控制API ID
+        request.header.identity.id = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        
-        std::string command_string = command_stream.str();
-        
-        auto msg = std_msgs::msg::String();
-        msg.data = command_string;
-        command_publisher_->publish(msg);
-        
-        logInfo("充电命令发送成功");
-        return true;
-        
+
+        // 设置充电参数
+        std::ostringstream params;
+        params << "{";
+        params << "\"enable\":" << (enable ? "true" : "false") << ",";
+        params << "\"mode\":\"wireless\"";
+        params << "}";
+        request.parameter = params.str();
+
+        // 发送API请求
+        bool result = go2_comm_->sendApiRequest(request);
+
+        if (result) {
+            logInfo("充电命令发送成功");
+        } else {
+            logError("充电命令发送失败");
+        }
+
+        return result;
+
     } catch (const std::exception& e) {
         logError("发送充电命令失败: " + std::string(e.what()));
         return false;
@@ -1043,100 +1064,78 @@ bool Go2PowerManager::exportToCsv(const std::string& file_path) const {
 
 // ============= ROS回调方法 =============
 
-void Go2PowerManager::bmsStateCallback(const std_msgs::msg::String::SharedPtr msg) {
+void Go2PowerManager::bmsStateCallback(const unitree_go::msg::BmsState::SharedPtr msg) {
     try {
-        // 解析键值对格式的BMS状态消息 (格式: key1=value1;key2=value2;...)
-        std::string data = msg->data;
-        std::regex pair_regex("(\\w+)=([^;]+)");
-        std::sregex_iterator iter(data.begin(), data.end(), pair_regex);
-        std::sregex_iterator end;
-        
+        // 使用Go2MessageConverter转换BMS状态
+        robot_base_interfaces::power_interface::BatteryInfo battery_info;
+        auto result = converter_->convertBmsState(*msg, battery_info);
+
+        if (result != ConversionResult::SUCCESS) {
+            logWarning("BMS状态转换失败");
+            return;
+        }
+
         std::lock_guard<std::mutex> lock(state_mutex_);
-        bool data_updated = false;
-        
-        for (; iter != end; ++iter) {
-            std::smatch match = *iter;
-            std::string key = match[1].str();
-            std::string value = match[2].str();
-            
-            try {
-                if (key == "voltage") {
-                    battery_state_.voltage = std::stof(value);
-                    data_updated = true;
-                } else if (key == "current") {
-                    battery_state_.current = std::stof(value);
-                    data_updated = true;
-                } else if (key == "temperature") {
-                    battery_state_.temperature = std::stof(value);
-                    data_updated = true;
-                } else if (key == "soc") {
-                    battery_state_.percentage = std::stof(value);
-                    data_updated = true;
-                } else if (key == "cycle_count") {
-                    battery_state_.cycles = static_cast<uint16_t>(std::stoul(value));
-                    data_updated = true;
-                } else if (key == "max_cell_temp") {
-                    battery_state_.max_cell_temp = std::stof(value);
-                    data_updated = true;
-                } else if (key == "min_cell_temp") {
-                    battery_state_.min_cell_temp = std::stof(value);
-                    data_updated = true;
-                } else if (key == "fault_code") {
-                    battery_state_.fault_code = static_cast<uint32_t>(std::stoul(value));
-                    data_updated = true;
-                } else if (key == "charging") {
-                    battery_state_.is_charging = (value == "true" || value == "1");
-                    if (battery_state_.is_charging) {
-                        charging_state_.state = robot_base_interfaces::power_interface::ChargingState::CHARGING;
-                    } else {
-                        charging_state_.state = robot_base_interfaces::power_interface::ChargingState::NOT_CHARGING;
-                    }
-                    data_updated = true;
-                }
-            } catch (const std::exception& e) {
-                logWarning("解析BMS参数失败: " + key + "=" + value + " (" + e.what() + ")");
+
+        // 更新内部电池状态
+        battery_state_.voltage = battery_info.voltage;
+        battery_state_.current = battery_info.current;
+        battery_state_.temperature = battery_info.temperature;
+        battery_state_.percentage = battery_info.soc_percentage;
+        battery_state_.cycles = battery_info.cycle_count;
+
+        // 更新Go2特有的电芯信息
+        if (battery_info.cells.size() >= 15) {
+            battery_state_.cell_voltages.resize(15);
+            for (size_t i = 0; i < 15; ++i) {
+                battery_state_.cell_voltages[i] = battery_info.cells[i].voltage;
             }
         }
-        
-        if (data_updated) {
-            // 更新功耗信息
-            battery_state_.power_consumption = std::abs(battery_state_.voltage * battery_state_.current);
-            
-            // 更新时间戳
-            battery_state_.last_update_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
-            
-            // 触发电池状态回调
-            if (battery_callback_) {
-                auto battery_info = getBatteryInfo();
-                battery_callback_(battery_info);
-            }
+
+        // 更新温度范围
+        battery_state_.max_cell_temp = battery_info.max_temperature;
+        battery_state_.min_cell_temp = battery_info.min_temperature;
+
+        // 更新充电状态
+        battery_state_.is_charging = (msg->status == 3 || msg->status == 4); // 充电中状态
+        if (battery_state_.is_charging) {
+            charging_state_.state = robot_base_interfaces::power_interface::ChargingState::CHARGING;
+        } else {
+            charging_state_.state = robot_base_interfaces::power_interface::ChargingState::NOT_CHARGING;
         }
-        
+
+        // 更新功耗信息
+        battery_state_.power_consumption = std::abs(battery_state_.voltage * battery_state_.current);
+
+        // 更新时间戳
+        battery_state_.last_update_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+
+        // 触发电池状态回调
+        if (battery_callback_) {
+            battery_callback_(battery_info);
+        }
+
+        // logDebug("BMS状态已更新：电量 " + std::to_string(battery_state_.percentage) + "%");
+
     } catch (const std::exception& e) {
         logError("处理BMS状态回调时发生异常: " + std::string(e.what()));
     }
 }
 
-void Go2PowerManager::wirelessControllerCallback(const std_msgs::msg::String::SharedPtr msg) {
+void Go2PowerManager::wirelessControllerCallback(const unitree_go::msg::WirelessController::SharedPtr msg) {
     try {
-        // 解析无线控制器状态，主要获取控制器电量信息
-        std::string data = msg->data;
-        std::regex pair_regex("(\\w+)=([^;]+)");
-        std::sregex_iterator iter(data.begin(), data.end(), pair_regex);
-        std::sregex_iterator end;
-        
-        for (; iter != end; ++iter) {
-            std::smatch match = *iter;
-            std::string key = match[1].str();
-            std::string value = match[2].str();
-            
-            // 这里可以处理控制器电量信息，当前主要关注机器人电池
-            // 可以在未来扩展以支持控制器电池监控
-        }
-        
+        // 目前无线控制器不包含电池信息，主要用于其他模块
+        // 可以在未来扩展以支持控制器电池监控或通过控制器触发充电操作
+        // 收到无线控制器数据，暂时不处理
+
+        // 示例：检查是否有特殊按键组合触发充电操作
+        // 这里可以根据实际需求扩展
+        (void)msg; // 避免未使用参数警告
+
     } catch (const std::exception& e) {
         // 静默处理控制器数据异常，因为这不是关键数据
+        logWarning("处理无线控制器数据异常: " + std::string(e.what()));
     }
 }
 

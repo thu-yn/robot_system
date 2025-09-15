@@ -55,21 +55,21 @@ public:
     // ============= 基础运动控制 =============
     
     /**
-     * @brief 设置机器人速度 - 对应ROS2 Twist消息
+     * @brief 设置机器人速度
      * @param velocity 目标速度
      * @return 控制结果
      */
     virtual MotionResult setVelocity(const Velocity& velocity) = 0;
     
     /**
-     * @brief 设置机器人姿态 - Go2的Euler控制
+     * @brief 设置机器人姿态
      * @param posture 目标姿态
      * @return 控制结果
      */
     virtual MotionResult setPosture(const Posture& posture) = 0;
     
     /**
-     * @brief 设置机身高度 - Go2特有能力
+     * @brief 设置机身高度
      * @param height 目标高度 (m)
      * @return 控制结果
      */
@@ -99,78 +99,78 @@ public:
     virtual MotionResult setGaitType(GaitType gait) = 0;
     
     /**
-     * @brief 执行平衡站立 - Go2 API: 1002
+     * @brief 执行平衡站立
      * @return 执行结果
      */
     virtual MotionResult balanceStand() = 0;
     
     /**
-     * @brief 执行站起动作 - Go2 API: 1004
+     * @brief 执行站起动作
      * @return 执行结果
      */
     virtual MotionResult standUp() = 0;
     
     /**
-     * @brief 执行趴下动作 - Go2 API: 1005
+     * @brief 执行趴下动作
      * @return 执行结果
      */
     virtual MotionResult standDown() = 0;
     
     /**
-     * @brief 执行坐下动作 - Go2 API: 1009
+     * @brief 执行坐下动作
      * @return 执行结果
      */
     virtual MotionResult sit() = 0;
     
     /**
-     * @brief 恢复站立 - Go2 API: 1006
+     * @brief 恢复站立
      * @return 执行结果
      */
     virtual MotionResult recoveryStand() = 0;
     
-    // ============= Go2特有高级功能 =============
+    // ============= 高级动作控制 =============
     
     /**
-     * @brief 执行舞蹈动作 - Go2专用
-     * @param dance_type 舞蹈类型 (1=Dance1, 2=Dance2)
+     * @brief 执行舞蹈动作
+     * @param dance_type 舞蹈类型
      * @return 执行结果
-     * 迁移说明：建议通过 `IQuadrupedTricks` 扩展接口实现；基础接口保留以保持兼容。
+     * @note 迁移说明：建议通过 `IQuadrupedTricks` 扩展接口实现；基础接口保留以保持兼容。
      */
     virtual MotionResult performDance(int dance_type = 1) = 0;
     
     /**
-     * @brief 执行前翻 - Go2 API: 1030
+     * @brief 执行前翻
      * @return 执行结果
-     * 迁移说明：建议通过 `IQuadrupedTricks` 扩展接口实现；基础接口保留以保持兼容。
+     * @note 迁移说明：建议通过 `IQuadrupedTricks` 扩展接口实现；基础接口保留以保持兼容。
      */
     virtual MotionResult frontFlip() = 0;
     
     /**
-     * @brief 执行前跳 - Go2 API: 1031  
+     * @brief 执行前跳
      * @return 执行结果
-     * 迁移说明：建议通过 `IQuadrupedTricks` 扩展接口实现；基础接口保留以保持兼容。
+     * @note 迁移说明：建议通过 `IQuadrupedTricks` 扩展接口实现；基础接口保留以保持兼容。
      */
     virtual MotionResult frontJump() = 0;
     
     /**
-     * @brief 执行打招呼动作 - Go2 API: 1016
+     * @brief 执行打招呼动作
      * @return 执行结果
-     * 迁移说明：建议通过 `IQuadrupedTricks` 扩展接口实现；基础接口保留以保持兼容。
+     * @note 迁移说明：建议通过 `IQuadrupedTricks` 扩展接口实现；基础接口保留以保持兼容。
      */
     virtual MotionResult hello() = 0;
     
     /**
-     * @brief 伸展动作 - Go2 API: 1017
+     * @brief 伸展动作
      * @return 执行结果
-     * 迁移说明：建议通过 `IQuadrupedTricks` 扩展接口实现；基础接口保留以保持兼容。
+     * @note 迁移说明：建议通过 `IQuadrupedTricks` 扩展接口实现；基础接口保留以保持兼容。
      */
     virtual MotionResult stretch() = 0;
     
     /**
-     * @brief 设置速度等级 - Go2 API: 1015
-     * @param level 速度等级 (1-9)
+     * @brief 设置速度等级
+     * @param level 速度等级 (具体范围由实现类决定)
      * @return 设置结果
-     * 迁移说明：建议通过 `IQuadrupedTricks` 扩展接口实现；基础接口保留以保持兼容。
+     * @note 迁移说明：建议通过 `IQuadrupedTricks` 扩展接口实现；基础接口保留以保持兼容。
      */
     virtual MotionResult setSpeedLevel(int level) = 0;
     

@@ -9,7 +9,9 @@
 此包定义了与机器人进行高级交互的通用API请求和响应消息。
 
 ### `unitree_api/msg/Request.msg`
+
 通用API请求消息。
+
 ```
 RequestHeader header
 string parameter
@@ -17,7 +19,9 @@ uint8[] binary
 ```
 
 ### `unitree_api/msg/RequestHeader.msg`
+
 请求消息头。
+
 ```
 RequestIdentity identity
 RequestLease lease
@@ -25,27 +29,35 @@ RequestPolicy policy
 ```
 
 ### `unitree_api/msg/RequestIdentity.msg`
+
 请求身份标识。
+
 ```
 int64  id
 int64 api_id
 ```
 
 ### `unitree_api/msg/RequestLease.msg`
+
 请求租约信息。
+
 ```
 int64 id
 ```
 
 ### `unitree_api/msg/RequestPolicy.msg`
+
 请求策略。
+
 ```
 int32 priority
 bool noreply
 ```
 
 ### `unitree_api/msg/Response.msg`
+
 通用API响应消息。
+
 ```
 ResponseHeader header
 string data
@@ -53,14 +65,18 @@ int8[] binary
 ```
 
 ### `unitree_api/msg/ResponseHeader.msg`
+
 响应消息头。
+
 ```
 RequestIdentity identity
 ResponseStatus status
 ```
 
 ### `unitree_api/msg/ResponseStatus.msg`
+
 响应状态码。
+
 ```
 int32 code
 ```
@@ -72,21 +88,27 @@ int32 code
 此包定义了专用于Go2机器人的消息。
 
 ### `unitree_go/msg/AudioData.msg`
+
 音频数据。
+
 ```
 uint64 time_frame
 uint8[] data
 ```
 
 ### `unitree_go/msg/BmsCmd.msg`
+
 电池管理系统（BMS）指令。
+
 ```
 uint8 off
 uint8[3] reserve
 ```
 
 ### `unitree_go/msg/BmsState.msg`
+
 BMS状态。
+
 ```
 uint8 version_high
 uint8 version_low
@@ -100,14 +122,18 @@ uint16[15] cell_vol
 ```
 
 ### `unitree_go/msg/Error.msg`
+
 错误信息。
+
 ```
 uint32 source
 uint32 state
 ```
 
 ### `unitree_go/msg/Go2FrontVideoData.msg`
+
 Go2前置摄像头视频数据。
+
 ```
 uint64 time_frame
 uint8[] video720p
@@ -116,7 +142,9 @@ uint8[] video180p
 ```
 
 ### `unitree_go/msg/HeightMap.msg`
+
 地形高度图。
+
 ```
 # Header
 float64 stamp         # timestamp
@@ -136,7 +164,9 @@ float32[] data
 ```
 
 ### `unitree_go/msg/IMUState.msg`
+
 IMU状态。
+
 ```
 float32[4] quaternion
 float32[3] gyroscope
@@ -146,7 +176,9 @@ int8 temperature
 ```
 
 ### `unitree_go/msg/InterfaceConfig.msg`
+
 接口配置。
+
 ```
 uint8 mode
 uint8 value
@@ -154,7 +186,9 @@ uint8[2] reserve
 ```
 
 ### `unitree_go/msg/LidarState.msg`
+
 激光雷达状态。
+
 ```
 float64 stamp
 string firmware_version
@@ -176,7 +210,9 @@ uint32 serial_buffer_read
 ```
 
 ### `unitree_go/msg/LowCmd.msg`
+
 底层控制指令。
+
 ```
 uint8[2] head
 uint8 level_flag
@@ -195,7 +231,9 @@ uint32 crc
 ```
 
 ### `unitree_go/msg/LowState.msg`
+
 底层状态信息。
+
 ```
 uint8[2] head
 uint8 level_flag
@@ -222,7 +260,9 @@ uint32 crc
 ```
 
 ### `unitree_go/msg/MotorCmd.msg`
+
 单个电机指令。
+
 ```
 uint8 mode
 float32 q
@@ -234,13 +274,17 @@ uint32[3] reserve
 ```
 
 ### `unitree_go/msg/MotorCmds.msg`
+
 多个电机指令集合。
+
 ```
 MotorCmd[] cmds
 ```
 
 ### `unitree_go/msg/MotorState.msg`
+
 单个电机状态。
+
 ```
 uint8 mode
 float32 q
@@ -256,13 +300,17 @@ uint32[2] reserve
 ```
 
 ### `unitree_go/msg/MotorStates.msg`
+
 多个电机状态集合。
+
 ```
 MotorState[] states
 ```
 
 ### `unitree_go/msg/PathPoint.msg`
+
 路径点信息。
+
 ```
 float32 t_from_start
 float32 x
@@ -274,14 +322,18 @@ float32 vyaw
 ```
 
 ### `unitree_go/msg/Req.msg`
+
 自定义请求消息。
+
 ```
 string uuid
 string body
 ```
 
 ### `unitree_go/msg/Res.msg`
+
 自定义响应消息。
+
 ```
 string uuid
 uint8[] data
@@ -289,7 +341,9 @@ string body
 ```
 
 ### `unitree_go/msg/SportModeCmd.msg`
+
 运动模式指令。
+
 ```
 uint8 mode
 uint8 gait_type
@@ -305,7 +359,9 @@ PathPoint[30] path_point
 ```
 
 ### `unitree_go/msg/SportModeState.msg`
+
 运动模式状态。
+
 ```
 TimeSpec stamp
 uint32 error_code
@@ -325,7 +381,9 @@ float32[12] foot_speed_body
 ```
 
 ### `unitree_go/msg/TimeSpec.msg`
+
 时间戳。
+
 ```
 # Time indicates a specific point in time, relative to a clock's 0 point.
 # The seconds component, valid over all int32 values.
@@ -335,7 +393,9 @@ uint32 nanosec
 ```
 
 ### `unitree_go/msg/UwbState.msg`
+
 UWB状态。
+
 ```
 uint8[2] version
 uint8 channel
@@ -357,152 +417,21 @@ uint8 enabled_from_app
 ```
 
 ### `unitree_go/msg/UwbSwitch.msg`
+
 UWB开关。
+
 ```
 uint8 enabled
 ```
 
 ### `unitree_go/msg/WirelessController.msg`
+
 无线手柄。
+
 ```
 float32 lx
 float32 ly
 float32 rx
 float32 ry
 uint16 keys
-```
-
----
-
-## 3. `unitree_hg`
-
-此包定义了用于G1/H1人形机器人的消息，部分可能与Go2通用。
-
-### `unitree_hg/msg/BmsCmd.msg`
-BMS指令。
-```
-uint8 cmd
-uint8[40] reserve
-```
-
-### `unitree_hg/msg/BmsState.msg`
-BMS状态。
-```
-uint8 version_high
-uint8 version_low
-uint8 fn
-uint16[40] cell_vol
-uint32[3] bmsvoltage
-int32 current
-uint8 soc
-uint8 soh
-int16[12] temperature
-uint16 cycle
-uint16 manufacturer_date
-uint32[5] bmsstate
-uint32[3] reserve
-```
-
-### `unitree_hg/msg/HandCmd.msg`
-手部指令。
-```
-MotorCmd[] motor_cmd
-uint32[4] reserve
-```
-
-### `unitree_hg/msg/HandState.msg`
-手部状态。
-```
-MotorState[] motor_state
-PressSensorState[] press_sensor_state
-IMUState imu_state
-
-float32 power_v
-float32 power_a
-float32 system_v
-float32 device_v
-uint32[2] error
-uint32[2] reserve
-```
-
-### `unitree_hg/msg/IMUState.msg`
-IMU状态。
-```
-float32[4] quaternion
-float32[3] gyroscope
-float32[3] accelerometer
-float32[3] rpy
-int16 temperature
-```
-
-### `unitree_hg/msg/LowCmd.msg`
-底层指令。
-```
-uint8 mode_pr
-uint8 mode_machine
-
-MotorCmd[35] motor_cmd
-
-uint32[4] reserve
-uint32 crc
-```
-
-### `unitree_hg/msg/LowState.msg`
-底层状态。
-```
-uint32[2] version
-uint8 mode_pr
-uint8 mode_machine
-uint32 tick
-IMUState imu_state
-MotorState[35] motor_state
-uint8[40] wireless_remote
-uint32[4] reserve
-uint32 crc
-```
-
-### `unitree_hg/msg/MainBoardState.msg`
-主板状态。
-```
-uint16[6] fan_state
-int16[6] temperature
-float32[6] value
-uint32[6] state
-```
-
-### `unitree_hg/msg/MotorCmd.msg`
-电机指令。
-```
-uint8 mode
-float32 q
-float32 dq
-float32 tau
-float32 kp
-float32 kd
-uint32 reserve
-```
-
-### `unitree_hg/msg/MotorState.msg`
-电机状态。
-```
-uint8 mode
-float32 q
-float32 dq
-float32 ddq
-float32 tau_est
-
-int16[2] temperature
-float32 vol
-uint32[2] sensor
-uint32 motorstate
-uint32[4] reserve
-```
-
-### `unitree_hg/msg/PressSensorState.msg`
-压力传感器状态。
-```
-float32[12] pressure
-float32[12] temperature
-uint32 lost
-uint32 reserve
 ```

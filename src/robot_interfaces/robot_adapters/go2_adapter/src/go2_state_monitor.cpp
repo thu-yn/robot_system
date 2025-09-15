@@ -1,8 +1,8 @@
 /**
- * @file go2_state_monitor.cpp
- * @brief Go2机器人状态监控器实现文件
+ * @file   go2_state_monitor.cpp
+ * @brief  Go2机器人状态监控器实现文件
  * @author Yang Nan
- * @date 2025-09-10
+ * @date   2025-09-15
  *
  * @details
  * 本文件提供了 `Go2StateMonitor` 类的完整实现。该类负责订阅Go2机器人的
@@ -19,11 +19,9 @@
  */
 
 #include "robot_adapters/go2_adapter/go2_state_monitor.hpp" // 引入对应的头文件
-#include <rclcpp/rclcpp.hpp> // ROS2 C++核心库
-#include <algorithm> // C++标准算法库 (例如 std::min, std::clamp)
-#include <fstream> // C++文件流库 (当前未使用)
-#include <robot_base_interfaces/state_interface/state_types.hpp> // 引入统一的状态类型定义
-#include <sstream> // C++字符串流库
+
+#include <rclcpp/rclcpp.hpp>    // ROS2 C++核心库
+#include <algorithm>            // C++标准算法库 
 
 namespace robot_adapters {
 namespace go2_adapter {
@@ -76,6 +74,15 @@ Go2StateMonitor::Go2StateMonitor(const std::string& node_name)
     alert_callback_ = nullptr;
     error_callback_ = nullptr;
     detailed_state_callback_ = nullptr;
+
+    // 初始化Go2专用组件
+    try {
+        message_converter_ = std::make_shared<Go2MessageConverter>();
+        go2_communication_ = std::make_shared<Go2Communication>(shared_from_this());
+        RCLCPP_INFO(this->get_logger(), "Go2 specialized components initialized successfully.");
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to initialize Go2 components: %s", e.what());
+    }
 }
 
 // ============= IStateMonitor接口实现 (IStateMonitor Interface Implementation) =============
@@ -132,7 +139,6 @@ bool Go2StateMonitor::shutdown() {
         // 重置（销毁）所有ROS2实体
         sport_state_sub_.reset();
         low_state_sub_.reset();
-        bms_state_sub_.reset();
         monitoring_timer_.reset();
 
         // 清理所有回调函数
@@ -437,11 +443,6 @@ void Go2StateMonitor::initializeROS2Communications() {
         std::bind(&Go2StateMonitor::lowStateCallback, this, std::placeholders::_1)
     );
 
-    // 订阅Go2电池管理系统状态话题
-    bms_state_sub_ = this->create_subscription<unitree_go::msg::BmsState>(
-        "/bms_state", qos,
-        std::bind(&Go2StateMonitor::bmsStateCallback, this, std::placeholders::_1)
-    );
     RCLCPP_INFO(this->get_logger(), "ROS2 communication components initialized.");
 }
 
@@ -450,6 +451,31 @@ void Go2StateMonitor::initializeROS2Communications() {
  * @details 处理运动状态消息，更新机器人的主要状态、错误码以及足端的位置和速度。
  */
 void Go2StateMonitor::sportModeStateCallback(const unitree_go::msg::SportModeState::SharedPtr msg) {
+    // 使用消息转换器转换运动状态
+    robot_base_interfaces::motion_interface::MotionState motion_state;
+    auto result = message_converter_->convertSportModeState(*msg, motion_state);
+
+    if (result == go2_adapter::ConversionResult::SUCCESS) {
+        // 更新详细状态中的运动信息
+        {
+            std::lock_guard<std::mutex> lock(detailed_state_mutex_);
+            detailed_state_.timestamp_ns = this->get_clock()->now().nanoseconds();
+            // 将转换后的运动状态映射到详细状态
+            detailed_state_.motion.mode = static_cast<uint8_t>(motion_state.current_mode);
+            detailed_state_.motion.gait_type = static_cast<uint8_t>(motion_state.current_gait);
+            detailed_state_.motion.progress = motion_state.motion_progress;
+            detailed_state_.motion.position.x = motion_state.position.x;
+            detailed_state_.motion.position.y = motion_state.position.y;
+            detailed_state_.motion.position.z = motion_state.position.z;
+            detailed_state_.motion.velocity.x = motion_state.velocity.linear_x;
+            detailed_state_.motion.velocity.y = motion_state.velocity.linear_y;
+            detailed_state_.motion.velocity.z = motion_state.velocity.linear_z;
+            detailed_state_.motion.yaw_speed = motion_state.velocity.angular_z;
+            detailed_state_.motion.body_height = motion_state.posture.body_height;
+            detailed_state_.motion.foot_raise_height = motion_state.foot_raise_height;
+        }
+    }
+
     auto new_robot_state = convertGo2StateToRobotState(msg);
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
@@ -470,54 +496,44 @@ void Go2StateMonitor::sportModeStateCallback(const unitree_go::msg::SportModeSta
  * @details 处理底层状态消息，更新所有电机的详细信息（温度、位置、速度、力矩）和足端的接触力信息。
  */
 void Go2StateMonitor::lowStateCallback(const unitree_go::msg::LowState::SharedPtr msg) {
+    // 使用消息转换器转换电机信息
+    std::vector<robot_base_interfaces::state_interface::MotorInfo> motors;
+    std::vector<unitree_go::msg::MotorState> first_12_motors(
+        msg->motor_state.begin(),
+        msg->motor_state.begin() + std::min(static_cast<size_t>(12), msg->motor_state.size())
+    );
+    auto motor_result = message_converter_->convertMotorInfo(first_12_motors, motors);
+
+    // 使用消息转换器转换IMU信息
+    decltype(robot_base_interfaces::state_interface::DetailedRobotState{}.imu) imu_info;
+    auto imu_result = message_converter_->convertIMUInfo(msg->imu_state, imu_info);
+
     {
         std::lock_guard<std::mutex> lock(detailed_state_mutex_);
         detailed_state_.timestamp_ns = this->get_clock()->now().nanoseconds();
-        detailed_state_.motors = convertGo2MotorInfo(msg);
+
+        // 如果转换成功，更新相应信息
+        if (motor_result == go2_adapter::ConversionResult::SUCCESS) {
+            detailed_state_.motors = motors;
+        } else {
+            // 失败时使用原有方法
+            detailed_state_.motors = convertGo2MotorInfo(msg);
+        }
+
+        if (imu_result == go2_adapter::ConversionResult::SUCCESS) {
+            detailed_state_.imu = imu_info;
+        }
+
+        // 更新系统电压电流信息
+        detailed_state_.system_v = msg->power_v;
+        detailed_state_.system_a = msg->power_a;
+
         updateFootForceInfo(msg);
     }
+
     RCLCPP_DEBUG(this->get_logger(), "Received Go2 low state update.");
 }
 
-/**
- * @brief `/bms_state` 话题的回调函数
- * @details 处理电池管理系统消息，主要用于检测低电量并生成相应的告警。
- */
-void Go2StateMonitor::bmsStateCallback(const unitree_go::msg::BmsState::SharedPtr msg) {
-    try {
-        // 检查电池电量百分比 (SOC)
-        if (msg->soc < 20 && msg->soc >= 10) {
-            robot_base_interfaces::state_interface::AlertInfo alert;
-            alert.type = robot_base_interfaces::state_interface::AlertType::WARNING;
-            alert.module = robot_base_interfaces::state_interface::SystemModule::POWER_MANAGEMENT;
-            alert.code = 2001; // 低电量警告码
-            alert.message = "Low Battery";
-            alert.description = "Battery level is low: " + std::to_string(msg->soc) + "%";
-            alert.timestamp_ns = this->get_clock()->now().nanoseconds();
-            addAlert(alert);
-        } else if (msg->soc < 10) {
-            robot_base_interfaces::state_interface::AlertInfo alert;
-            alert.type = robot_base_interfaces::state_interface::AlertType::CRITICAL;
-            alert.module = robot_base_interfaces::state_interface::SystemModule::POWER_MANAGEMENT;
-            alert.code = 2002; // 严重低电量警告码
-            alert.message = "Critically Low Battery";
-            alert.description = "Battery level is critically low: " + std::to_string(msg->soc) + "%";
-            alert.timestamp_ns = this->get_clock()->now().nanoseconds();
-            addAlert(alert);
-        }
-        RCLCPP_DEBUG(this->get_logger(), "BMS state update - SOC: %d%%", msg->soc);
-    } catch (const std::exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "Exception in BMS state callback: %s", e.what());
-        robot_base_interfaces::state_interface::AlertInfo error_alert;
-        error_alert.type = robot_base_interfaces::state_interface::AlertType::ERROR;
-        error_alert.module = robot_base_interfaces::state_interface::SystemModule::POWER_MANAGEMENT;
-        error_alert.code = 2999; // BMS回调异常错误码
-        error_alert.message = "BMS Callback Exception";
-        error_alert.description = "Exception occurred during BMS callback processing: " + std::string(e.what());
-        error_alert.timestamp_ns = this->get_clock()->now().nanoseconds();
-        addAlert(error_alert);
-    }
-}
 
 /**
  * @brief 监控定时器的回调函数
@@ -798,7 +814,7 @@ float Go2StateMonitor::calculateHealthScore() const {
     std::lock_guard<std::mutex> alerts_lock(alerts_mutex_);
 
     float total_score = 0.0f;
-    const float max_score = 1.0f; // 总权重为1.0
+    // 总权重为1.0，由各个分量的权重组成
 
     // 1. 基于错误码的分数 (权重 30%)
     float system_score = (current_error_code_ == 0) ? 1.0f : 0.0f;

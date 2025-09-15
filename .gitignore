@@ -33,3 +33,6 @@ Thumbs.db
 
 # Third party libraries (will be handled as submodules)
 src/third_party/
+
+# Progress files
+progress/

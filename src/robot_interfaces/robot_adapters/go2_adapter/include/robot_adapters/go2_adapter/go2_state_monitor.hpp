@@ -18,6 +18,9 @@
 #include "unitree_go/msg/low_state.hpp"
 #include "unitree_go/msg/bms_state.hpp"
 
+#include "robot_adapters/go2_adapter/go2_communication.hpp" // 引入Go2通信管理模块
+#include "robot_adapters/go2_adapter/go2_message_converter.hpp" // 引入Go2消息转换器
+
 namespace robot_adapters {
 namespace go2_adapter {
 
@@ -412,18 +415,25 @@ private:
     std::map<robot_base_interfaces::state_interface::SystemModule, bool> module_enabled_;
     
     // ============= ROS2通信组件 =============
-    
+
     /** @brief Go2运动状态订阅器 */
     rclcpp::Subscription<unitree_go::msg::SportModeState>::SharedPtr sport_state_sub_;
-    
+
     /** @brief Go2低级状态订阅器 */
     rclcpp::Subscription<unitree_go::msg::LowState>::SharedPtr low_state_sub_;
-    
-    /** @brief Go2电池状态订阅器 */
-    rclcpp::Subscription<unitree_go::msg::BmsState>::SharedPtr bms_state_sub_;
-    
+
+    // 注意：Go2机器人没有独立的BMS状态话题，电池状态信息包含在LowState中
+
     /** @brief 状态监控定时器 */
     rclcpp::TimerBase::SharedPtr monitoring_timer_;
+
+    // ============= Go2专用组件 =============
+
+    /** @brief Go2通信管理器 */
+    std::shared_ptr<Go2Communication> go2_communication_;
+
+    /** @brief Go2消息转换器 */
+    std::shared_ptr<Go2MessageConverter> message_converter_;
     
     // ============= 回调函数存储 =============
     
@@ -464,11 +474,7 @@ private:
      */
     void lowStateCallback(const unitree_go::msg::LowState::SharedPtr msg);
     
-    /**
-     * @brief Go2电池状态回调函数
-     * @param msg 接收到的BmsState消息
-     */
-    void bmsStateCallback(const unitree_go::msg::BmsState::SharedPtr msg);
+    // 注意：电池状态处理由go2_power_manager.cpp负责，这里不需要相关函数
     
     /**
      * @brief 监控定时器回调函数
@@ -540,6 +546,24 @@ private:
      * @param sport_state Go2运动状态
      */
     void updateFootPositionAndVelocity(const unitree_go::msg::SportModeState::SharedPtr& sport_state);
+
+    /**
+     * @brief 检查运动模式变化并生成相应告警
+     * @param motion_state 统一运动状态
+     */
+    void checkMotionModeAlerts(const robot_base_interfaces::motion_interface::MotionState& motion_state);
+
+    /**
+     * @brief 检查电机温度告警
+     * @param motors 电机信息列表
+     */
+    void checkMotorTemperatureAlerts(const std::vector<robot_base_interfaces::state_interface::MotorInfo>& motors);
+
+    /**
+     * @brief 检查电池状态告警
+     * @param bms_state Go2电池管理状态
+     */
+    void checkBatteryAlerts(const unitree_go::msg::BmsState& bms_state);
     
     // ============= Go2专用常量定义 =============
     
