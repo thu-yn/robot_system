@@ -5,18 +5,17 @@
  * @date   2025-09-15
  *
  * 本文件实现了Go2机器人的运动控制功能，包括：
- * - 统一运动接口的完整实现
- * - Go2 API命令的正确封装和发送
- * - 基于go2_communication和go2_message_converter的消息转换
- * - 机器人状态的实时监控和转换
- * - 安全限制和错误处理
- * - 回调函数和事件通知
+ *      - 统一运动接口的完整实现
+ *      - Go2 API命令的正确封装和发送
+ *      - 基于go2_communication和go2_message_converter的消息转换
+ *      - 机器人状态的实时监控和转换
+ *      - 安全限制和错误处理
+ *      - 回调函数和事件通知
  */
 
 #include "robot_adapters/go2_adapter/go2_motion_controller.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <cmath>
-#include <algorithm>
 
 namespace robot_adapters {
 namespace go2_adapter {
@@ -32,9 +31,10 @@ Go2MotionController::Go2MotionController(const std::string& node_name)
     // 记录节点启动信息
     RCLCPP_INFO(this->get_logger(), "Go2 Motion Controller节点正在初始化...");
 
-    // 创建Go2通信管理器和消息转换器
-    go2_communication_ = std::make_shared<Go2Communication>(shared_from_this());
+    // 创建Go2消息转换器（不需要shared_from_this）
     go2_converter_ = std::make_shared<Go2MessageConverter>();
+
+    // Go2通信管理器将在initialize()方法中创建，因为需要shared_from_this()
 
     // 初始化运动状态结构体
     current_motion_state_.current_mode = robot_base_interfaces::motion_interface::MotionMode::IDLE;
@@ -61,6 +61,11 @@ robot_base_interfaces::motion_interface::MotionResult Go2MotionController::initi
     RCLCPP_INFO(this->get_logger(), "正在初始化Go2运动控制器...");
     
     try {
+        // 创建Go2通信管理器
+        // 使用rclcpp::Node的shared_from_this()获取节点shared_ptr
+        auto node_ptr = rclcpp::Node::shared_from_this();
+        go2_communication_ = std::make_shared<Go2Communication>(node_ptr);
+
         // 初始化Go2通信管理器
         if (!go2_communication_->initialize()) {
             throw std::runtime_error("Go2通信管理器初始化失败");
@@ -578,16 +583,26 @@ void Go2MotionController::initializeROS2Communications() {
 }
 
 void Go2MotionController::sportModeStateCallback(const unitree_go::msg::SportModeState::SharedPtr msg) {
+    RCLCPP_INFO(this->get_logger(), "===== sportModeStateCallback 被调用 =====");
+    RCLCPP_INFO(this->get_logger(), "接收到Go2状态消息: mode=%d, current_mode_code=%d", msg->mode, msg->error_code);
+
     // 使用消息转换器将Go2原生状态转换为统一格式
     robot_base_interfaces::motion_interface::MotionState unified_state;
     auto result = go2_converter_->convertSportModeState(*msg, unified_state);
+
+    RCLCPP_INFO(this->get_logger(), "消息转换结果: %s",
+                (result == robot_adapters::go2_adapter::ConversionResult::SUCCESS) ? "成功" : "失败");
 
     if (result == robot_adapters::go2_adapter::ConversionResult::SUCCESS) {
         // 更新当前状态
         {
             std::lock_guard<std::mutex> lock(motion_state_mutex_);
             current_motion_state_ = unified_state;
-            current_error_code_ = msg->error_code;
+            // 注意：error_code实际表示当前模式，不是错误代码
+            // current_error_code_ = msg->error_code; // 移除错误的赋值
+            RCLCPP_INFO(this->get_logger(), "current_motion_state_ 已更新: mode=%d, height=%.3f",
+                        static_cast<int>(current_motion_state_.current_mode),
+                        current_motion_state_.posture.body_height);
         }
 
         // 触发状态变化回调
@@ -596,13 +611,7 @@ void Go2MotionController::sportModeStateCallback(const unitree_go::msg::SportMod
         RCLCPP_WARN(this->get_logger(), "Go2状态转换失败: %s", go2_converter_->getLastError().c_str());
     }
 
-    // 如果有错误，触发错误回调
-    if (msg->error_code != 0) {
-        std::string error_msg = "Go2系统错误代码: " + std::to_string(msg->error_code);
-        triggerErrorCallback(msg->error_code, error_msg);
-    }
-
-    RCLCPP_DEBUG(this->get_logger(), "接收到Go2状态更新，模式: %d, 错误码: %d",
+    RCLCPP_DEBUG(this->get_logger(), "接收到Go2状态更新，模式: %d, 当前模式代码: %d",
                  msg->mode, msg->error_code);
 }
 
@@ -753,7 +762,7 @@ Go2MotionController::convertSportStateToMotionState(
     
     // 转换时间戳 (SportModeState使用TimeSpec而非标准Header)
     motion_state.timestamp_ns = sport_state->stamp.sec * 1000000000ULL + sport_state->stamp.nanosec;
-    motion_state.error_code = sport_state->error_code;
+    motion_state.error_code = 0;  // 运动状态中的error_code保持为0表示正常
     
     // 转换运动模式（需要根据Go2的实际模式编号调整）
     switch (sport_state->mode) {

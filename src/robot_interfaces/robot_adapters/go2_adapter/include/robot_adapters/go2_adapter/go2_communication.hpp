@@ -474,7 +474,6 @@ private:
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr         odom_sub_;         // 里程计订阅者
     rclcpp::Subscription<unitree_go::msg::SportModeState>::SharedPtr sport_state_sub_;
     rclcpp::Subscription<unitree_go::msg::LowState>::SharedPtr       low_state_sub_;
-    rclcpp::Subscription<unitree_go::msg::BmsState>::SharedPtr       bms_state_sub_;
 
     // --- 定时器 ---
     rclcpp::TimerBase::SharedPtr monitor_timer_;          ///< 用于监控连接状态的定时器

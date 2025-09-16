@@ -6,6 +6,7 @@
 #include <chrono>
 #include <functional>
 #include <mutex>
+#include <memory>
 
 // 引入统一运动控制接口
 #include "robot_base_interfaces/motion_interface/i_motion_controller.hpp"

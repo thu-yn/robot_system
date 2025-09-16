@@ -686,9 +686,7 @@ bool Go2Communication::createPublishersAndSubscribers() {
             "lowstate", sensor_qos,  // 高频底层状态话题
             std::bind(&Go2Communication::lowStateCallback, this, std::placeholders::_1));
 
-        bms_state_sub_ = node_->create_subscription<unitree_go::msg::BmsState>(
-            "bms_state", sensor_qos,  // BMS状态话题
-            std::bind(&Go2Communication::bmsStateCallback, this, std::placeholders::_1));
+        // 不再直接订阅 bms_state；改为从 lowstate 中提取并转发
 
         logInfo("Publishers and subscribers created successfully.");
         return true;
@@ -709,7 +707,7 @@ void Go2Communication::destroyPublishersAndSubscribers() {
     odom_sub_.reset();
     sport_state_sub_.reset();
     low_state_sub_.reset();
-    bms_state_sub_.reset();
+    // 不再存在 bms_state_sub_
     logInfo("Publishers and subscribers destroyed.");
 }
 
@@ -789,6 +787,15 @@ void Go2Communication::lowStateCallback(const unitree_go::msg::LowState::SharedP
         low_state_callback_(msg);
     }
     logDebug("LowState message received.");
+
+    // 从 LowState 提取 bms_state，并转发为内部的 BMS 回调
+    try {
+        auto bms_ptr = std::make_shared<unitree_go::msg::BmsState>(msg->bms_state);
+        // 直接复用内部的 bmsStateCallback，确保缓冲与统计一致
+        bmsStateCallback(bms_ptr);
+    } catch (const std::exception& e) {
+        logWarning(std::string("Failed to forward BMS from LowState: ") + e.what());
+    }
 }
 
 /**

@@ -125,17 +125,28 @@ Go2MessageConverter::convertGaitType(uint8_t go2_gait) const {
     return robot_base_interfaces::motion_interface::GaitType::IDLE;
 }
 
-robot_base_interfaces::power_interface::BatteryHealth 
-Go2MessageConverter::convertBatteryHealth(uint32_t go2_status) const {
-    // 根据映射表转换Go2电池健康状态
-    auto it = battery_health_map_.find(go2_status);
-    if (it != battery_health_map_.end()) {
-        return it->second;
+robot_base_interfaces::power_interface::BatteryHealth
+Go2MessageConverter::inferBatteryHealthFromBms(const unitree_go::msg::BmsState& go2_bms) const {
+    // 根据BMS数据推断电池健康状态
+    // Go2的BMS状态字段是工作状态，不是健康状态，需要根据其他参数推断
+
+    // 首先检查是否有严重故障状态
+    if (go2_bms.status == 11) { // ALARM 报警状态
+        return robot_base_interfaces::power_interface::BatteryHealth::POOR;
     }
-    
-    // 未知状态，设置错误信息并返回默认值
-    setError("未知的Go2电池健康状态: " + std::to_string(go2_status));
-    return robot_base_interfaces::power_interface::BatteryHealth::UNKNOWN;
+
+    // 根据充电循环次数判断健康状态
+    if (go2_bms.cycle < 100) {
+        return robot_base_interfaces::power_interface::BatteryHealth::EXCELLENT;
+    } else if (go2_bms.cycle < 300) {
+        return robot_base_interfaces::power_interface::BatteryHealth::GOOD;
+    } else if (go2_bms.cycle < 600) {
+        return robot_base_interfaces::power_interface::BatteryHealth::FAIR;
+    } else if (go2_bms.cycle < 1000) {
+        return robot_base_interfaces::power_interface::BatteryHealth::POOR;
+    } else {
+        return robot_base_interfaces::power_interface::BatteryHealth::DEAD;
+    }
 }
 
 robot_base_interfaces::power_interface::ChargingState 
@@ -163,7 +174,7 @@ ConversionResult Go2MessageConverter::convertSportModeState(
     try {
         // 转换时间戳：Go2使用TimeSpec结构体，转换为纳秒时间戳
         unified_state.timestamp_ns = go2_state.stamp.sec * 1000000000ULL + go2_state.stamp.nanosec;
-        unified_state.error_code   = go2_state.error_code;
+        unified_state.error_code   = 0;  // 统一状态中的错误代码设为0表示正常
         
         // 转换运动模式和步态类型
         unified_state.current_mode = convertMotionMode(go2_state.mode);
@@ -231,7 +242,10 @@ ConversionResult Go2MessageConverter::convertMotionState(
         // 转换时间戳：从纳秒时间戳转换为Go2的TimeSpec结构
         go2_state.stamp.sec     = unified_state.timestamp_ns / 1000000000ULL;
         go2_state.stamp.nanosec = unified_state.timestamp_ns % 1000000000ULL;
-        go2_state.error_code    = unified_state.error_code;
+        // 注意：Go2的error_code字段实际表示当前模式，不是错误代码
+        // 这里应该根据具体的模式映射来设置，而不是直接赋值错误代码
+        // go2_state.error_code    = unified_state.error_code;
+        go2_state.error_code    = static_cast<uint32_t>(unified_state.current_mode);
         
         // 反向查找运动模式：从统一模式转换为Go2模式值
         bool mode_found = false;
@@ -565,19 +579,59 @@ ConversionResult Go2MessageConverter::convertBmsState(
     try {
         // 电流转换：Go2 current字段是int32_t，需要转换为实际安培值
         unified_battery.current = static_cast<double>(go2_bms.current) / 1000.0; // 毫安转安培
-        
+
         // 电量百分比转换
         unified_battery.soc_percentage = static_cast<double>(go2_bms.soc);
-        
+
+        // 电芯电压转换 - Go2 BmsState中的cell_vol是以毫伏为单位的
+        unified_battery.cells.clear();
+        if (!go2_bms.cell_vol.empty()) {
+            float total_voltage = 0.0f;
+            for (size_t i = 0; i < go2_bms.cell_vol.size() && i < 15; ++i) {
+                robot_base_interfaces::power_interface::BatteryCellInfo cell;
+                cell.cell_id = static_cast<uint8_t>(i);
+                cell.voltage = static_cast<double>(go2_bms.cell_vol[i]) / 1000.0; // mV转V
+                cell.temperature = 25.0; // 单个电芯温度，Go2没有单独的电芯温度
+                cell.capacity_mah = 15000.0 / 15.0; // 平均分配容量
+                cell.health_percentage = 100.0f; // 默认健康度
+                cell.cycle_count = go2_bms.cycle;
+                unified_battery.cells.push_back(cell);
+                total_voltage += cell.voltage;
+            }
+            // 设置总电压为电芯电压之和
+            unified_battery.voltage = static_cast<double>(total_voltage);
+        } else {
+            // 如果没有电芯电压数据，设置默认值
+            unified_battery.voltage = 25.2; // Go2典型电压 (15节电池 * 1.68V/节)
+        }
+
         // 温度信息：使用BQ NTC温度传感器数组的第一个值
         if (go2_bms.bq_ntc.size() > 0) {
             unified_battery.temperature = static_cast<double>(go2_bms.bq_ntc[0]);
+
+            // 计算温度范围
+            auto min_temp = *std::min_element(go2_bms.bq_ntc.begin(), go2_bms.bq_ntc.end());
+            auto max_temp = *std::max_element(go2_bms.bq_ntc.begin(), go2_bms.bq_ntc.end());
+            unified_battery.min_temperature = static_cast<double>(min_temp);
+            unified_battery.max_temperature = static_cast<double>(max_temp);
+
+            // 填充温度传感器数组
+            unified_battery.bq_ntc_temps.clear();
+            unified_battery.mcu_ntc_temps.clear();
+            for (const auto& temp : go2_bms.bq_ntc) {
+                unified_battery.bq_ntc_temps.push_back(static_cast<float>(temp));
+            }
+            for (const auto& temp : go2_bms.mcu_ntc) {
+                unified_battery.mcu_ntc_temps.push_back(static_cast<float>(temp));
+            }
         } else {
             unified_battery.temperature = 25.0; // 默认温度
+            unified_battery.min_temperature = 25.0;
+            unified_battery.max_temperature = 25.0;
         }
         
-        // 转换健康状态（使用status字段）
-        unified_battery.health = convertBatteryHealth(go2_bms.status);
+        // 根据BMS数据推断电池健康状态（不使用status字段，因为status是工作状态不是健康状态）
+        unified_battery.health = inferBatteryHealthFromBms(go2_bms);
         unified_battery.status = static_cast<uint8_t>(go2_bms.status & 0xFF);
         
         // 设置电池循环次数信息

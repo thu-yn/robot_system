@@ -7,6 +7,9 @@ log/
 .vscode/
 .claude/
 
+# doc files
+docs/
+
 # Cache directories
 .cache/
 
@@ -37,4 +40,5 @@ src/third_party/
 # Progress files
 progress/
 
+# clangd
 .clangd

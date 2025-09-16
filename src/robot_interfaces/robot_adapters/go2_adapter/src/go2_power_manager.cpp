@@ -7,6 +7,7 @@
 
 #include "robot_adapters/go2_adapter/go2_power_manager.hpp"
 #include "unitree_api/msg/request.hpp"
+#include <cstdlib>
 #include <sstream>
 #include <iomanip>
 #include <fstream>
@@ -156,7 +157,7 @@ std::vector<robot_base_interfaces::power_interface::ChargingType>
 Go2PowerManager::getSupportedChargingTypes() const {
     return {
         robot_base_interfaces::power_interface::ChargingType::WIRELESS,
-        robot_base_interfaces::power_interface::ChargingType::SOLAR
+        robot_base_interfaces::power_interface::ChargingType::REPLACEABLE
     };
 }
 
@@ -174,7 +175,7 @@ robot_base_interfaces::power_interface::BatteryInfo Go2PowerManager::getBatteryI
     // 基础信息
     info.voltage = battery_state_.voltage;
     info.current = battery_state_.current;
-    info.power = battery_state_.voltage * battery_state_.current;
+    info.power = std::abs(battery_state_.voltage * battery_state_.current);
     info.temperature = battery_state_.temperature;
     info.soc_percentage = battery_state_.percentage;
     
@@ -182,18 +183,18 @@ robot_base_interfaces::power_interface::BatteryInfo Go2PowerManager::getBatteryI
     info.capacity_mah = 15000.0f;  // Go2电池容量15Ah
     info.remaining_mah = info.capacity_mah * battery_state_.percentage / 100.0f;
     info.design_capacity_mah = 15000.0f;
-    
+
     // 健康状态
     info.health = calculateBatteryHealth();
     info.cycle_count = battery_state_.cycles;
     info.health_percentage = std::max(0.0f, 100.0f - (battery_state_.cycles * 0.1f));
-    
+
     // 温度信息
     info.max_temperature = battery_state_.max_cell_temp;
     info.min_temperature = battery_state_.min_cell_temp;
     info.bq_ntc_temps = {battery_state_.temperature, battery_state_.temperature}; // 模拟2个温度传感器
     info.mcu_ntc_temps = {battery_state_.temperature, battery_state_.temperature};
-    
+
     // 电芯信息
     info.cells.clear();
     for (size_t i = 0; i < battery_state_.cell_voltages.size(); ++i) {
@@ -206,7 +207,7 @@ robot_base_interfaces::power_interface::BatteryInfo Go2PowerManager::getBatteryI
         cell.cycle_count = battery_state_.cycles;
         info.cells.push_back(cell);
     }
-    
+
     // 时间戳
     info.timestamp_ns = battery_state_.last_update_ns;
     
@@ -230,7 +231,7 @@ float Go2PowerManager::getBatteryCurrent() const {
 
 float Go2PowerManager::getBatteryPower() const {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    return battery_state_.voltage * battery_state_.current;
+    return std::abs(battery_state_.voltage * battery_state_.current);
 }
 
 float Go2PowerManager::getBatteryTemperature() const {
@@ -239,6 +240,7 @@ float Go2PowerManager::getBatteryTemperature() const {
 }
 
 robot_base_interfaces::power_interface::BatteryHealth Go2PowerManager::getBatteryHealth() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
     return calculateBatteryHealth();
 }
 
@@ -845,26 +847,25 @@ bool Go2PowerManager::validateConfiguration() {
 }
 
 robot_base_interfaces::power_interface::BatteryHealth Go2PowerManager::calculateBatteryHealth() const {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-    
+    // 注意：此方法假设调用者已经持有state_mutex_锁
     // 基于循环次数和温度计算电池健康度
     float health_score = 100.0f;
-    
+
     // 循环次数影响 (每100次循环降低5%)
     health_score -= (battery_state_.cycles / 100.0f) * 5.0f;
-    
+
     // 温度影响
     if (battery_state_.temperature > 45.0f) {
         health_score -= (battery_state_.temperature - 45.0f) * 2.0f;
     }
-    
+
     // 故障代码影响
     if (battery_state_.fault_code != 0) {
         health_score -= 20.0f;
     }
-    
+
     health_score = std::max(0.0f, health_score);
-    
+
     if (health_score > 90.0f) {
         return robot_base_interfaces::power_interface::BatteryHealth::EXCELLENT;
     } else if (health_score > 80.0f) {
@@ -1085,9 +1086,9 @@ void Go2PowerManager::bmsStateCallback(const unitree_go::msg::BmsState::SharedPt
         battery_state_.cycles = battery_info.cycle_count;
 
         // 更新Go2特有的电芯信息
-        if (battery_info.cells.size() >= 15) {
-            battery_state_.cell_voltages.resize(15);
-            for (size_t i = 0; i < 15; ++i) {
+        if (!battery_info.cells.empty()) {
+            battery_state_.cell_voltages.resize(battery_info.cells.size());
+            for (size_t i = 0; i < battery_info.cells.size(); ++i) {
                 battery_state_.cell_voltages[i] = battery_info.cells[i].voltage;
             }
         }
@@ -1097,7 +1098,7 @@ void Go2PowerManager::bmsStateCallback(const unitree_go::msg::BmsState::SharedPt
         battery_state_.min_cell_temp = battery_info.min_temperature;
 
         // 更新充电状态
-        battery_state_.is_charging = (msg->status == 3 || msg->status == 4); // 充电中状态
+        battery_state_.is_charging = (msg->status == 6 || msg->status == 7); // 充电中状态
         if (battery_state_.is_charging) {
             charging_state_.state = robot_base_interfaces::power_interface::ChargingState::CHARGING;
         } else {

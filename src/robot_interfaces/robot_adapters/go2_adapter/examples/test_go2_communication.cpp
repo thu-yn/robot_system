@@ -116,7 +116,7 @@ public:
         std::cout << "0. 运行所有测试" << std::endl;
         std::cout << "q. 退出程序" << std::endl;
         std::cout << std::string(60, '-') << std::endl;
-        std::cout << "请输入选择: ";
+        std::cout << "请输入选择: " << std::flush;
     }
 
     /**

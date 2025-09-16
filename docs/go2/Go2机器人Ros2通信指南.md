@@ -28,7 +28,7 @@ Go2机器人通过 `unitree_go::msg::SportModeState`消息提供完整的运动�
 // 消息结构定义
 struct SportModeState {
     TimeSpec stamp;                    // 时间戳
-    uint32 error_code;                 // 错误代码
+    uint32 error_code;                 // 当前模式 (注意：字段名易误解，实际表示模式而非错误代码)
     IMUState imu_state;               // IMU状态数据
     uint8 mode;                       // 当前运动模式
     float32 progress;                 // 动作执行进度
@@ -57,7 +57,36 @@ struct IMUState {
 };
 ```
 
-### 2.3 运动模式定义
+### 2.3 当前模式（error_code）定义
+
+| 模式值    | 状态机名称                        |
+| --------- | --------------------------------- |
+| 100       | 灵动                              |
+| 1001      | 阻尼                              |
+| 1002      | 站立锁定                          |
+| 1004/2006 | 蹲下                              |
+| 1006      | 打招呼/伸懒腰/舞蹈/拜年/比心/开心 |
+| 1007      | 坐下                              |
+| 1008      | 前跳                              |
+| 1009      | 扑人                              |
+| 1013      | 平衡站立                          |
+| 1015      | 常规行走                          |
+| 1016      | 常规跑步                          |
+| 1017      | 常规续航                          |
+| 1091      | 摆姿势                            |
+| 2007      | 闪避                              |
+| 2008      | 并腿跑                            |
+| 2009      | 跳跃跑                            |
+| 2010      | 经典                              |
+| 2011      | 倒立                              |
+| 2012      | 前空翻                            |
+| 2013      | 后空翻                            |
+| 2014      | 左空翻                            |
+| 2016      | 交叉步                            |
+| 2017      | 直立                              |
+| 2019      | 牵引                              |
+
+### 2.4 运动模式(mode)定义
 
 | 模式值 | 模式名称      | 说明         |
 | ------ | ------------- | ------------ |
@@ -76,7 +105,7 @@ struct IMUState {
 | 12     | frontJump     | 前跳         |
 | 13     | frontPounce   | 前扑         |
 
-### 2.4 步态类型定义
+### 2.5步态类型(gait_type)定义
 
 | 步态值 | 步态名称         | 说明       |
 | ------ | ---------------- | ---------- |
@@ -109,7 +138,7 @@ public:
     MotionStateSuber() : Node("motion_state_suber") {
         // 选择话题频率
         const auto *topic_name = HIGH_FREQ ? "sportmodestate" : "lf/sportmodestate";
-    
+  
         // 创建订阅者
         suber_ = this->create_subscription<unitree_go::msg::SportModeState>(
             topic_name, 10,
@@ -142,7 +171,7 @@ void process_robot_state(const unitree_go::msg::SportModeState::SharedPtr &data)
                 "Position: [%.3f, %.3f, %.3f], Height: %.3f",
                 data->position[0], data->position[1], data->position[2],
                 data->body_height);
-            
+        
     RCLCPP_INFO(this->get_logger(),
                 "Velocity: [%.3f, %.3f, %.3f], Yaw Speed: %.3f",
                 data->velocity[0], data->velocity[1], data->velocity[2],
@@ -169,20 +198,20 @@ void process_foot_states(const unitree_go::msg::SportModeState::SharedPtr &data)
     // 足端编号：0-前左，1-前右，2-后左，3-后右
     for (int foot = 0; foot < 4; foot++) {
         int base_idx = foot * 3;
-    
+  
         // 足端位置 (相对机体坐标系)
         float pos_x = data->foot_position_body[base_idx];
         float pos_y = data->foot_position_body[base_idx + 1];
         float pos_z = data->foot_position_body[base_idx + 2];
-    
+  
         // 足端速度 (相对机体坐标系)
         float vel_x = data->foot_speed_body[base_idx];
         float vel_y = data->foot_speed_body[base_idx + 1];
         float vel_z = data->foot_speed_body[base_idx + 2];
-    
+  
         // 足端力
         float force = data->foot_force[foot];
-    
+  
         RCLCPP_DEBUG(this->get_logger(),
                     "Foot %d - Pos:[%.3f,%.3f,%.3f], Vel:[%.3f,%.3f,%.3f], Force:%.1f",
                     foot, pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, force);
@@ -253,15 +282,15 @@ struct BmsState {
     uint8 status;                     // 电池状态
     /*
     电池状态定义：
-    - 未开启电池
-    - 唤醒事件
-    - 电池预充电中
-    - 电池正常充电中
-    - 电池正常放电中
-    - 电池自放电中
-    - 电池存在警告
-    - 等待按键复位警告中
-    - 复位中
+    - 0:SAFE,（未开启电池）
+    - 1：WAKE_UP,（唤醒事件）
+    - 6：PRECHG,（电池预充电中）
+    - 7：CHG,（电池正常充电中）
+    - 8：DCHG,（电池正常放电中）
+    - 9：SELF_DCHG,（电池自放电中）
+    - 11：ALARM,（电池存在警告）
+    - 12：RESET_ALARM,（等待按键复位警告中）
+    - 13：AUTO_RECOVERY （复位中）
     */
     uint8 soc;                        // 电池电量 (1%-100%)
     int32 current;                    // 充放电电流 (mA) 正值充电，负值放电
@@ -315,7 +344,7 @@ public:
     LowStateSubscriber() : Node("low_state_subscriber") {
         // 选择话题频率
         const auto *topic_name = HIGH_FREQ ? "lowstate" : "lf/lowstate";
-    
+  
         // 创建订阅者
         subscriber_ = this->create_subscription<unitree_go::msg::LowState>(
             topic_name, 10,
@@ -330,22 +359,22 @@ private:
         if (INFO_IMU) {
             process_imu_data(data->imu_state);
         }
-    
+  
         // 处理电机状态
         if (INFO_MOTOR) {
             process_motor_states(data->motor_state);
         }
-    
+  
         // 处理足端力数据
         if (INFO_FOOT_FORCE) {
             process_foot_forces(data);
         }
-    
+  
         // 处理电池状态
         if (INFO_BATTERY) {
             process_battery_state(data);
         }
-    
+  
         // 处理BMS状态
         process_bms_state(data->bms_state);
     }
@@ -396,13 +425,13 @@ void process_motor_states(const std::array<unitree_go::msg::MotorState, 20> &mot
     // Go2实际使用前12个电机
     for (int i = 0; i < 12; i++) {
         const auto &motor = motors[i];
-    
+  
         RCLCPP_DEBUG(this->get_logger(),
                     "Motor[%d]: pos=%.3f rad, vel=%.3f rad/s, "
                     "acc=%.3f rad/s², torque=%.3f N·m, temp=%d°C",
                     i, motor.q, motor.dq, motor.ddq, 
                     motor.tau_est, motor.temperature);
-    
+  
         // 电机安全检查
         check_motor_safety(i, motor);
     }
@@ -449,7 +478,7 @@ void process_foot_forces(const unitree_go::msg::LowState::SharedPtr &data) {
     for (int i = 0; i < 4; i++) {
         bool in_contact = abs(data->foot_force_est[i]) > contact_threshold_;
         foot_contact_states_[i] = in_contact;
-    
+  
         if (in_contact != last_contact_states_[i]) {
             std::string foot_names[] = {"FR", "FL", "RR", "RL"};
             RCLCPP_INFO(this->get_logger(),
@@ -608,7 +637,7 @@ public:
             [this](const unitree_go::msg::WirelessController::SharedPtr data) {
                 process_controller_input(data);
             });
-    
+  
         RCLCPP_INFO(this->get_logger(), "Wireless controller subscriber started");
     }
 
@@ -616,10 +645,10 @@ private:
     void process_controller_input(const unitree_go::msg::WirelessController::SharedPtr &data) {
         // 处理摇杆输入
         process_joystick_input(data);
-    
+  
         // 处理按键输入
         process_button_input(data);
-    
+  
         // 状态更新和事件触发
         update_controller_state(data);
     }
@@ -649,7 +678,7 @@ void process_joystick_input(const unitree_go::msg::WirelessController::SharedPtr
     if (abs(left_x) > 0.01f || abs(left_y) > 0.01f) {
         RCLCPP_DEBUG(this->get_logger(),
                     "Left Joystick: X=%.3f, Y=%.3f", left_x, left_y);
-    
+  
         // 转换为机器人运动命令
         convert_to_motion_command(left_x, left_y);
     }
@@ -658,7 +687,7 @@ void process_joystick_input(const unitree_go::msg::WirelessController::SharedPtr
     if (abs(right_x) > 0.01f || abs(right_y) > 0.01f) {
         RCLCPP_DEBUG(this->get_logger(),
                     "Right Joystick: X=%.3f, Y=%.3f", right_x, right_y);
-    
+  
         // 转换为旋转命令
         convert_to_rotation_command(right_x, right_y);
     }
@@ -740,23 +769,23 @@ void handle_button_events(uint16_t current_keys) {
   
     if (pressed != 0) {
         RCLCPP_INFO(this->get_logger(), "Keys pressed: 0x%04X", pressed);
-    
+  
         // 具体按键事件处理
         if (pressed & 0x0004) {  // Start键
             RCLCPP_INFO(this->get_logger(), "Start button pressed - System ready!");
             handle_start_button();
         }
-    
+  
         if (pressed & 0x0008) {  // Select键
             RCLCPP_INFO(this->get_logger(), "Select button pressed - Emergency stop!");
             handle_emergency_stop();
         }
-    
+  
         if (pressed & 0x0100) {  // A键
             RCLCPP_INFO(this->get_logger(), "A button pressed - Confirm action");
             handle_confirm_action();
         }
-    
+  
         if (pressed & 0x0200) {  // B键
             RCLCPP_INFO(this->get_logger(), "B button pressed - Cancel action");
             handle_cancel_action();
@@ -809,10 +838,10 @@ public:
     void update_state(const unitree_go::msg::WirelessController::SharedPtr &data) {
         current_controller_data_ = *data;
         last_update_time_ = std::chrono::steady_clock::now();
-    
+  
         // 连接状态检查
         check_connection_status();
-    
+  
         // 模式切换逻辑
         update_control_mode();
     }
@@ -830,15 +859,15 @@ public:
         if (current_mode_ != MANUAL_CONTROL) {
             return {0.0f, 0.0f};
         }
-    
+  
         // 应用死区和缩放
         float linear_x = apply_deadzone(current_controller_data_.ly, 0.05f);
         float angular_z = apply_deadzone(current_controller_data_.rx, 0.05f);
-    
+  
         // 速度限制
         linear_x *= max_linear_velocity_;
         angular_z *= max_angular_velocity_;
-    
+  
         return {linear_x, angular_z};
     }
 
@@ -859,13 +888,13 @@ private:
   
     void update_control_mode() {
         uint16_t keys = current_controller_data_.keys;
-    
+  
         // 紧急停止检查
         if ((keys & 0x0030) == 0x0030) {  // L2 + R2
             current_mode_ = EMERGENCY_STOP;
             return;
         }
-    
+  
         // 模式切换逻辑
         if (keys & 0x0004) {  // Start键 - 激活手动控制
             current_mode_ = MANUAL_CONTROL;
@@ -888,21 +917,21 @@ public:
   
     unitree_go::msg::WirelessController filter_input(
         const unitree_go::msg::WirelessController &raw_input) {
-    
+  
         unitree_go::msg::WirelessController filtered;
-    
+  
         // 低通滤波器 - 减少噪声和抖动
         filtered_lx_ = low_pass_filter(raw_input.lx, filtered_lx_);
         filtered_ly_ = low_pass_filter(raw_input.ly, filtered_ly_);
         filtered_rx_ = low_pass_filter(raw_input.rx, filtered_rx_);
         filtered_ry_ = low_pass_filter(raw_input.ry, filtered_ry_);
-    
+  
         filtered.lx = filtered_lx_;
         filtered.ly = filtered_ly_;
         filtered.rx = filtered_rx_;
         filtered.ry = filtered_ry_;
         filtered.keys = raw_input.keys;  // 按键不需要滤波
-    
+  
         return filtered;
     }
 
@@ -932,15 +961,15 @@ public:
             [this](const unitree_go::msg::WirelessController::SharedPtr msg) {
                 handle_controller_input(msg);
             });
-    
+  
         // 发布运动命令 (这部分在下一节详细说明)
         cmd_publisher_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
-    
+  
         // 定时器 - 定期检查连接状态
         status_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(100),
             [this]() { check_controller_status(); });
-    
+  
         RCLCPP_INFO(this->get_logger(), "Teleop control node initialized");
     }
 
@@ -948,10 +977,10 @@ private:
     void handle_controller_input(const unitree_go::msg::WirelessController::SharedPtr &msg) {
         // 更新状态管理器
         state_manager_.update_state(msg);
-    
+  
         // 滤波处理
         auto filtered = input_filter_.filter_input(*msg);
-    
+  
         // 根据当前模式处理输入
         if (state_manager_.get_current_mode() == ControllerStateManager::MANUAL_CONTROL) {
             auto [linear_x, angular_z] = state_manager_.get_motion_command();
@@ -963,9 +992,9 @@ private:
         auto twist_msg = geometry_msgs::msg::Twist();
         twist_msg.linear.x = linear_x;
         twist_msg.angular.z = angular_z;
-    
+  
         cmd_publisher_->publish(twist_msg);
-    
+  
         RCLCPP_DEBUG(this->get_logger(),
                     "Published cmd_vel: linear=%.3f, angular=%.3f",
                     linear_x, angular_z);
@@ -1182,26 +1211,26 @@ public:
         // 创建请求发布者
         req_publisher_ = this->create_publisher<unitree_api::msg::Request>(
             "/api/sport/request", 10);
-    
+  
         // 创建响应订阅者
         resp_subscriber_ = this->create_subscription<unitree_api::msg::Response>(
             "/api/sport/response", 10,
             [this](const unitree_api::msg::Response::SharedPtr msg) {
                 handle_response(msg);
             });
-    
+  
         // 订阅Twist消息进行速度控制
         cmd_vel_subscriber_ = this->create_subscription<geometry_msgs::msg::Twist>(
             "/cmd_vel", 10,
             [this](const geometry_msgs::msg::Twist::SharedPtr msg) {
                 handle_velocity_command(msg);
             });
-    
+  
         // 初始化SportClient，传入节点指针
         sport_client_ = std::make_unique<SportClient>(this);
-    
+  
         RCLCPP_INFO(this->get_logger(), "Go2 Motion Controller initialized");
-    
+  
         // 初始化机器人到站立状态
         initialize_robot();
     }
@@ -1215,14 +1244,14 @@ private:
     void initialize_robot() {
         // 等待一段时间让系统初始化
         rclcpp::sleep_for(std::chrono::seconds(2));
-    
+  
         // 创建请求消息
         unitree_api::msg::Request req;
-    
+  
         // 站起机器人
         sport_client_->StandUp(req);
         RCLCPP_INFO(this->get_logger(), "Command sent: StandUp");
-    
+  
         // 等待站起完成后切换到平衡站立
         rclcpp::sleep_for(std::chrono::seconds(3));
         sport_client_->BalanceStand(req);
@@ -1233,16 +1262,16 @@ private:
         float vx = msg->linear.x;
         float vy = msg->linear.y;
         float vyaw = msg->angular.z;
-    
+  
         // 速度限制
         vx = std::clamp(vx, -2.0f, 2.0f);
         vy = std::clamp(vy, -1.0f, 1.0f);
         vyaw = std::clamp(vyaw, -2.0f, 2.0f);
-    
+  
         // 创建请求消息并发送运动命令
         unitree_api::msg::Request req;
         sport_client_->Move(req, vx, vy, vyaw);
-    
+  
         RCLCPP_DEBUG(this->get_logger(),
                     "Motion command sent: vx=%.3f, vy=%.3f, vyaw=%.3f",
                     vx, vy, vyaw);
@@ -1253,7 +1282,7 @@ private:
         RCLCPP_DEBUG(this->get_logger(), 
                     "Received response for API ID: %ld, Status: %d", 
                     msg->header.identity.api_id, msg->header.status.code);
-    
+  
         // 根据状态码处理不同情况
         if (msg->header.status.code != 0) {
             RCLCPP_WARN(this->get_logger(),
@@ -1275,7 +1304,7 @@ public:
     PoseControlExample() : Node("pose_control_example") {
         // 初始化SportClient
         sport_client_ = std::make_unique<SportClient>(this);
-    
+  
         // 创建定时器，定期执行姿态控制
         control_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(100),
@@ -1289,16 +1318,16 @@ private:
     void execute_pose_control() {
         static float phase = 0.0f;
         phase += 0.1f;
-    
+  
         // 计算正弦波姿态
         float roll = 0.2f * sin(phase);
         float pitch = 0.1f * cos(phase);
         float yaw = 0.0f;
-    
+  
         // 创建请求并发送欧拉角控制命令
         unitree_api::msg::Request req;
         sport_client_->Euler(req, roll, pitch, yaw);
-    
+  
         RCLCPP_DEBUG(this->get_logger(),
                     "Pose command: roll=%.3f, pitch=%.3f, yaw=%.3f",
                     roll, pitch, yaw);

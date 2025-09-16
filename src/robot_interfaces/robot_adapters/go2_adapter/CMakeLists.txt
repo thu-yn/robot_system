@@ -240,6 +240,17 @@ target_include_directories(go2_motion_controller_test PUBLIC
 ament_target_dependencies(go2_motion_controller_test ${DEPENDENCIES})
 target_link_libraries(go2_motion_controller_test go2_motion_controller)
 
+# Go2电池管理功能验证示例
+add_executable(go2_power_manager_test
+  examples/test_go2_power_manager.cpp
+)
+target_include_directories(go2_power_manager_test PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(go2_power_manager_test ${DEPENDENCIES})
+target_link_libraries(go2_power_manager_test go2_power_manager)
+
 # ========== 单元测试构建 ==========
 # 暂时禁用测试以完成基本构建
 # if(BUILD_TESTING)
@@ -302,6 +313,7 @@ install(TARGETS
   go2_communication_test
   go2_message_converter_test
   go2_motion_controller_test
+  go2_power_manager_test
   DESTINATION lib/${PROJECT_NAME}
 )
 

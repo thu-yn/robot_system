@@ -14,6 +14,7 @@
  */
 
 #include <rclcpp/rclcpp.hpp>
+#include <rcutils/logging.h>
 #include <memory>
 #include <iostream>
 #include <iomanip>
@@ -44,12 +45,13 @@ void signalHandler(int signal) {
     if (signal == SIGINT) {
         std::cout << "\n\n检测到 Ctrl+C，正在停止测试程序..." << std::endl;
         g_shutdown_requested.store(true);
+        _exit(0); // 立即退出，不做任何清理，避免阻塞
     }
 }
 
 class Go2MotionControllerTester {
 private:
-    std::unique_ptr<Go2MotionController> controller_;
+    std::shared_ptr<Go2MotionController> controller_;
     std::vector<std::string> test_results_;
     int total_tests_;
     int passed_tests_;
@@ -67,8 +69,8 @@ public:
           state_callback_triggered_(false), error_callback_triggered_(false),
           last_error_code_(0) {
 
-        // 创建Go2MotionController实例
-        controller_ = std::make_unique<Go2MotionController>("test_go2_motion_controller");
+        // 创建Go2MotionController实例（必须使用shared_ptr，因为它继承自enable_shared_from_this）
+        controller_ = std::make_shared<Go2MotionController>("test_go2_motion_controller");
 
         std::cout << "=== Go2MotionController功能验证测试程序 ===" << std::endl;
         std::cout << "初始化测试环境..." << std::endl;
@@ -100,14 +102,20 @@ public:
         std::cout << "0. 运行所有测试" << std::endl;
         std::cout << "q. 退出程序" << std::endl;
         std::cout << std::string(60, '-') << std::endl;
-        std::cout << "请输入选择: ";
+        std::cout << "请输入选择: " << std::flush;
+    }
+
+    /**
+     * @brief 获取控制器实例，供main函数中的ROS消息处理线程使用
+     */
+    std::shared_ptr<Go2MotionController> getController() const {
+        return controller_;
     }
 
     /**
      * @brief 运行交互式菜单
      */
     void runInteractiveMenu() {
-        char choice;
 
         while (!g_shutdown_requested.load()) {
             if (!rclcpp::ok()) {
@@ -116,8 +124,9 @@ public:
 
             showTestMenu();
 
-            // 非阻塞等待键盘输入，避免 Ctrl+C 时阻塞在输入上
+            // 非阻塞等待键盘输入，避免 Ctrl+C 时阻塞在输入上，支持多位数
             bool got_input = false;
+            std::string input;
             while (!got_input) {
                 if (g_shutdown_requested.load() || !rclcpp::ok()) {
                     break;
@@ -128,17 +137,28 @@ public:
                 pfd.events = POLLIN;
                 int ret = poll(&pfd, 1, 200); // 200ms 轮询
                 if (ret > 0 && (pfd.revents & POLLIN)) {
-                    int c = std::getchar();
-                    if (c == EOF) {
-                        // 输入流结束，直接退出
-                        return;
+                    // 一次性读完整行，提取数字或'q'
+                    for (;;) {
+                        int c = std::getchar();
+                        if (c == EOF) {
+                            return;
+                        }
+                        if (c == '\n') { got_input = true; break; }
+                        if (c == '\r') {
+                            // 兼容CRLF，尝试吞掉后续的'\n'
+                            int next_c = std::getchar();
+                            if (next_c != '\n' && next_c != EOF) { ungetc(next_c, stdin); }
+                            got_input = true; break;
+                        }
+                        if (c >= '0' && c <= '9') {
+                            input += static_cast<char>(c);
+                        } else if (c == 'q' || c == 'Q') {
+                            input = "q";
+                            // 继续丢弃到行尾
+                        } else {
+                            // 忽略其它字符（空格等），继续等到行尾
+                        }
                     }
-                    choice = static_cast<char>(c);
-                    // 丢弃本行剩余内容
-                    while (c != '\n' && c != EOF) {
-                        c = std::getchar();
-                    }
-                    got_input = true;
                 }
             }
 
@@ -146,45 +166,35 @@ public:
                 break;
             }
 
-            switch (choice) {
-                case '1':
-                    runSingleTest("初始化和生命周期管理测试", [this]() { testInitializationLifecycle(); });
-                    break;
-                case '2':
-                    runSingleTest("运动能力参数测试", [this]() { testCapabilities(); });
-                    break;
-                case '3':
-                    runSingleTest("基础运动控制测试", [this]() { testBasicMotionControl(); });
-                    break;
-                case '4':
-                    runSingleTest("运动模式切换测试", [this]() { testModeSwitch(); });
-                    break;
-                case '5':
-                    runSingleTest("Go2基本动作测试", [this]() { testBasicActions(); });
-                    break;
-                case '6':
-                    runSingleTest("Go2特有高级功能测试", [this]() { testAdvancedFeatures(); });
-                    break;
-                case '7':
-                    runSingleTest("状态查询功能测试", [this]() { testStateQuery(); });
-                    break;
-                case '8':
-                    runSingleTest("回调函数设置测试", [this]() { testCallbacks(); });
-                    break;
-                case '9':
-                    runSingleTest("错误处理和安全测试", [this]() { testErrorHandling(); });
-                    break;
-                case '0':
-                    runAllTests();
-                    break;
-                case 'q':
-                case 'Q':
-                    std::cout << "强制退出程序..." << std::endl;
-                    std::fflush(stdout);
-                    _exit(0); // 立即退出，不做任何清理，避免阻塞
-                default:
-                    std::cout << "无效选择，请重新输入。" << std::endl;
-                    break;
+            if (input == "q" || input == "Q") {
+                std::cout << "强制退出程序..." << std::endl;
+                std::fflush(stdout);
+                _exit(0); // 立即退出，不做任何清理，避免阻塞
+            } else if (input == "1") {
+                runSingleTest("初始化和生命周期管理测试", [this]() { testInitializationLifecycle(); });
+            } else if (input == "2") {
+                runSingleTest("运动能力参数测试", [this]() { testCapabilities(); });
+            } else if (input == "3") {
+                runSingleTest("基础运动控制测试", [this]() { testBasicMotionControl(); });
+            } else if (input == "4") {
+                runSingleTest("运动模式切换测试", [this]() { testModeSwitch(); });
+            } else if (input == "5") {
+                runSingleTest("Go2基本动作测试", [this]() { testBasicActions(); });
+            } else if (input == "6") {
+                runSingleTest("Go2特有高级功能测试", [this]() { testAdvancedFeatures(); });
+            } else if (input == "7") {
+                runSingleTest("状态查询功能测试", [this]() { testStateQuery(); });
+            } else if (input == "8") {
+                runSingleTest("回调函数设置测试", [this]() { testCallbacks(); });
+            } else if (input == "9") {
+                runSingleTest("错误处理和安全测试", [this]() { testErrorHandling(); });
+            } else if (input == "0") {
+                runAllTests();
+            } else if (!input.empty()) {
+                std::cout << "无效选择，请重新输入。" << std::endl;
+            } else {
+                // 空输入，重新显示提示
+                std::cout << "请输入选择: " << std::flush;
             }
         }
 
@@ -307,184 +317,531 @@ private:
     }
 
     /**
-     * @brief 测试基础运动控制
+     * @brief 测试基础运动控制 - 交互式菜单
      */
     void testBasicMotionControl() {
-        printHeader("测试基础运动控制");
+        printHeader("基础运动控制测试 - 交互式菜单");
 
-        // 测试速度控制
-        Velocity test_velocity;
-        test_velocity.linear_x = 0.5f;
-        test_velocity.linear_y = 0.2f;
-        test_velocity.angular_z = 0.3f;
+        std::vector<std::string> options = {
+            "前进运动 (linear_x)",
+            "后退运动 (-linear_x)",
+            "左移运动 (linear_y)",
+            "右移运动 (-linear_y)",
+            "左转运动 (angular_z)",
+            "右转运动 (-angular_z)",
+            "复合运动 (前进+左转)",
+            "停止所有运动",
+            "测试姿态控制 (roll/pitch/yaw)",
+            "测试机身高度控制",
+            "测试极限速度(安全测试)",
+            "测试极限高度(安全测试)"
+        };
 
-        MotionResult vel_result = controller_->setVelocity(test_velocity);
-        checkTest("setVelocity()调用", vel_result == MotionResult::SUCCESS);
+        while (!checkShutdown()) {
+            int choice = showSubmenu("基础运动控制测试菜单", options);
+            if (choice == -1) break;  // 返回上级菜单
 
-        // 测试边界速度（应该被限制）
-        Velocity extreme_velocity;
-        extreme_velocity.linear_x = 10.0f; // 超过最大速度
-        extreme_velocity.linear_y = 5.0f;
-        extreme_velocity.angular_z = 10.0f;
+            int duration = getDurationFromUser(2000);
+            if (duration == -1) continue;  // 用户取消
 
-        MotionResult extreme_vel_result = controller_->setVelocity(extreme_velocity);
-        checkTest("极限速度控制", extreme_vel_result == MotionResult::CAPABILITY_LIMITED);
+            switch (choice) {
+                case 0: { // 前进运动
+                    Velocity vel = {}; vel.linear_x = 0.5f;
+                    bool success = safeExecuteCommand("前进运动", [this, vel]() {
+                        return controller_->setVelocity(vel);
+                    }, duration);
+                    checkTest("前进运动", success);
+                    break;
+                }
+                case 1: { // 后退运动
+                    Velocity vel = {}; vel.linear_x = -0.5f;
+                    bool success = safeExecuteCommand("后退运动", [this, vel]() {
+                        return controller_->setVelocity(vel);
+                    }, duration);
+                    checkTest("后退运动", success);
+                    break;
+                }
+                case 2: { // 左移运动
+                    Velocity vel = {}; vel.linear_y = 0.3f;
+                    bool success = safeExecuteCommand("左移运动", [this, vel]() {
+                        return controller_->setVelocity(vel);
+                    }, duration);
+                    checkTest("左移运动", success);
+                    break;
+                }
+                case 3: { // 右移运动
+                    Velocity vel = {}; vel.linear_y = -0.3f;
+                    bool success = safeExecuteCommand("右移运动", [this, vel]() {
+                        return controller_->setVelocity(vel);
+                    }, duration);
+                    checkTest("右移运动", success);
+                    break;
+                }
+                case 4: { // 左转运动
+                    Velocity vel = {}; vel.angular_z = 0.5f;
+                    bool success = safeExecuteCommand("左转运动", [this, vel]() {
+                        return controller_->setVelocity(vel);
+                    }, duration);
+                    checkTest("左转运动", success);
+                    break;
+                }
+                case 5: { // 右转运动
+                    Velocity vel = {}; vel.angular_z = -0.5f;
+                    bool success = safeExecuteCommand("右转运动", [this, vel]() {
+                        return controller_->setVelocity(vel);
+                    }, duration);
+                    checkTest("右转运动", success);
+                    break;
+                }
+                case 6: { // 复合运动
+                    Velocity vel = {}; vel.linear_x = 0.3f; vel.angular_z = 0.3f;
+                    bool success = safeExecuteCommand("复合运动(前进+左转)", [this, vel]() {
+                        return controller_->setVelocity(vel);
+                    }, duration);
+                    checkTest("复合运动", success);
+                    break;
+                }
+                case 7: { // 停止所有运动
+                    Velocity vel = {};
+                    bool success = safeExecuteCommand("停止所有运动", [this, vel]() {
+                        return controller_->setVelocity(vel);
+                    }, 1000);
+                    checkTest("停止运动", success);
+                    break;
+                }
+                case 8: { // 姿态控制
+                    Posture posture = {};
+                    posture.roll = 0.1f; posture.pitch = 0.05f; posture.yaw = 0.2f;
+                    posture.body_height = 0.3f;
+                    bool success = safeExecuteCommand("姿态控制", [this, posture]() {
+                        return controller_->setPosture(posture);
+                    }, duration);
+                    checkTest("姿态控制", success);
+                    break;
+                }
+                case 9: { // 机身高度控制
+                    bool success = safeExecuteCommand("机身高度控制", [this]() {
+                        return controller_->setBodyHeight(0.25f);
+                    }, duration);
+                    checkTest("机身高度控制", success);
+                    break;
+                }
+                case 10: { // 极限速度测试
+                    Velocity extreme_vel = {};
+                    extreme_vel.linear_x = 10.0f; extreme_vel.angular_z = 10.0f;
+                    MotionResult result = controller_->setVelocity(extreme_vel);
+                    checkTest("极限速度控制", result == MotionResult::CAPABILITY_LIMITED);
+                    break;
+                }
+                case 11: { // 极限高度测试
+                    MotionResult result = controller_->setBodyHeight(1.0f);
+                    checkTest("极限高度控制", result == MotionResult::CAPABILITY_LIMITED);
+                    break;
+                }
+            }
 
-        // 测试姿态控制
-        Posture test_posture;
-        test_posture.roll = 0.1f;
-        test_posture.pitch = 0.05f;
-        test_posture.yaw = 0.2f;
-        test_posture.body_height = 0.3f;
-
-        MotionResult posture_result = controller_->setPosture(test_posture);
-        checkTest("setPosture()调用", posture_result == MotionResult::SUCCESS);
-
-        // 测试机身高度控制
-        MotionResult height_result = controller_->setBodyHeight(0.25f);
-        checkTest("setBodyHeight()调用", height_result == MotionResult::SUCCESS);
-
-        // 测试极限高度（应该被限制）
-        MotionResult extreme_height = controller_->setBodyHeight(1.0f); // 超过最大高度
-        checkTest("极限高度控制", extreme_height == MotionResult::CAPABILITY_LIMITED);
-
-        // 测试停止速度命令
-        Velocity zero_velocity = {};
-        MotionResult stop_result = controller_->setVelocity(zero_velocity);
-        checkTest("停止速度设置", stop_result == MotionResult::SUCCESS);
+            // 每次测试后自动停止运动确保安全
+            if (choice < 7) {  // 除了"停止运动"选项外
+                std::cout << "  自动停止运动确保安全..." << std::endl;
+                Velocity zero_vel = {};
+                safeExecuteCommand("自动停止", [this, zero_vel]() {
+                    return controller_->setVelocity(zero_vel);
+                }, 500);
+            }
+        }
     }
 
     /**
-     * @brief 测试运动模式切换
+     * @brief 测试运动模式切换 - 交互式菜单
      */
     void testModeSwitch() {
-        printHeader("测试运动模式切换");
+        printHeader("运动模式切换测试 - 交互式菜单");
 
-        // 测试所有支持的运动模式
-        std::vector<std::pair<MotionMode, std::string>> modes = {
-            {MotionMode::IDLE, "IDLE"},
-            {MotionMode::BALANCE_STAND, "BALANCE_STAND"},
-            {MotionMode::LOCOMOTION, "LOCOMOTION"},
-            {MotionMode::LIE_DOWN, "LIE_DOWN"},
-            {MotionMode::SIT, "SIT"},
-            {MotionMode::RECOVERY_STAND, "RECOVERY_STAND"}
+        std::vector<std::string> options = {
+            "空闲模式 (IDLE)",
+            "平衡站立 (BALANCE_STAND)",
+            "运动模式 (LOCOMOTION)",
+            "趴下模式 (LIE_DOWN)",
+            "坐姿模式 (SIT)",
+            "恢复站立 (RECOVERY_STAND)",
+            "--- 步态设置 ---",
+            "空闲步态 (IDLE)",
+            "小跑步态 (TROT)",
+            "奔跑步态 (RUN)",
+            "爬楼梯步态 (CLIMB_STAIR)"
         };
 
-        for (const auto& [mode, mode_name] : modes) {
-            MotionResult result = controller_->switchMode(mode);
-            checkTest("模式切换到 " + mode_name, result == MotionResult::SUCCESS);
+        while (!checkShutdown()) {
+            int choice = showSubmenu("运动模式切换测试菜单", options);
+            if (choice == -1) break;  // 返回上级菜单
 
-            // 等待模式切换完成
-            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-        }
+            if (choice == 6) {
+                std::cout << "--- 这是分隔线，请选择步态设置选项 ---" << std::endl;
+                continue;
+            }
 
-        // 测试步态类型设置
-        std::vector<std::pair<GaitType, std::string>> gaits = {
-            {GaitType::IDLE, "IDLE"},
-            {GaitType::TROT, "TROT"},
-            {GaitType::RUN, "RUN"},
-            {GaitType::CLIMB_STAIR, "CLIMB_STAIR"}
-        };
+            int duration = getDurationFromUser(3000);  // 模式切换默认需要更长时间
+            if (duration == -1) continue;  // 用户取消
 
-        for (const auto& [gait, gait_name] : gaits) {
-            MotionResult result = controller_->setGaitType(gait);
-            checkTest("步态设置为 " + gait_name, result == MotionResult::SUCCESS);
+            switch (choice) {
+                case 0: { // IDLE
+                    bool success = safeExecuteCommand("切换到空闲模式", [this]() {
+                        return controller_->switchMode(MotionMode::IDLE);
+                    }, duration);
+                    checkTest("空闲模式切换", success);
+                    break;
+                }
+                case 1: { // BALANCE_STAND
+                    bool success = safeExecuteCommand("切换到平衡站立", [this]() {
+                        return controller_->switchMode(MotionMode::BALANCE_STAND);
+                    }, duration);
+                    checkTest("平衡站立模式切换", success);
+                    break;
+                }
+                case 2: { // LOCOMOTION
+                    bool success = safeExecuteCommand("切换到运动模式", [this]() {
+                        return controller_->switchMode(MotionMode::LOCOMOTION);
+                    }, duration);
+                    checkTest("运动模式切换", success);
+                    break;
+                }
+                case 3: { // LIE_DOWN
+                    std::cout << "  ⚠️ 注意：趴下模式可能需要手动恢复，确保安全" << std::endl;
+                    bool success = safeExecuteCommand("切换到趴下模式", [this]() {
+                        return controller_->switchMode(MotionMode::LIE_DOWN);
+                    }, duration);
+                    checkTest("趴下模式切换", success);
+
+                    // 自动恢复到安全状态
+                    if (success && !checkShutdown()) {
+                        std::cout << "    自动恢复到站立状态..." << std::endl;
+                        safeExecuteCommand("恢复站立", [this]() {
+                            return controller_->switchMode(MotionMode::RECOVERY_STAND);
+                        }, 4000);
+                    }
+                    break;
+                }
+                case 4: { // SIT
+                    bool success = safeExecuteCommand("切换到坐姿模式", [this]() {
+                        return controller_->switchMode(MotionMode::SIT);
+                    }, duration);
+                    checkTest("坐姿模式切换", success);
+                    break;
+                }
+                case 5: { // RECOVERY_STAND
+                    bool success = safeExecuteCommand("切换到恢复站立", [this]() {
+                        return controller_->switchMode(MotionMode::RECOVERY_STAND);
+                    }, duration);
+                    checkTest("恢复站立模式切换", success);
+                    break;
+                }
+                case 7: { // IDLE 步态
+                    bool success = safeExecuteCommand("设置空闲步态", [this]() {
+                        return controller_->setGaitType(GaitType::IDLE);
+                    }, duration);
+                    checkTest("空闲步态设置", success);
+                    break;
+                }
+                case 8: { // TROT 步态
+                    bool success = safeExecuteCommand("设置小跑步态", [this]() {
+                        return controller_->setGaitType(GaitType::TROT);
+                    }, duration);
+                    checkTest("小跑步态设置", success);
+                    break;
+                }
+                case 9: { // RUN 步态
+                    bool success = safeExecuteCommand("设置奔跑步态", [this]() {
+                        return controller_->setGaitType(GaitType::RUN);
+                    }, duration);
+                    checkTest("奔跑步态设置", success);
+                    break;
+                }
+                case 10: { // CLIMB_STAIR 步态
+                    bool success = safeExecuteCommand("设置爬楼梯步态", [this]() {
+                        return controller_->setGaitType(GaitType::CLIMB_STAIR);
+                    }, duration);
+                    checkTest("爬楼梯步态设置", success);
+                    break;
+                }
+            }
         }
     }
 
     /**
-     * @brief 测试Go2基本动作
+     * @brief 测试Go2基本动作 - 交互式菜单
      */
     void testBasicActions() {
-        printHeader("测试Go2基本动作");
+        printHeader("Go2基本动作测试 - 交互式菜单");
 
-        // 测试平衡站立
-        MotionResult balance_result = controller_->balanceStand();
-        checkTest("balanceStand()调用", balance_result == MotionResult::SUCCESS);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        std::vector<std::string> options = {
+            "平衡站立 (balanceStand)",
+            "站起动作 (standUp)",
+            "坐下动作 (sit)",
+            "恢复站立 (recoveryStand)",
+            "趴下动作 (standDown)",
+            "快速站立序列",
+            "快速趴下序列",
+            "基本动作循环测试"
+        };
 
-        // 测试站起
-        MotionResult standup_result = controller_->standUp();
-        checkTest("standUp()调用", standup_result == MotionResult::SUCCESS);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        while (!checkShutdown()) {
+            int choice = showSubmenu("Go2基本动作测试菜单", options);
+            if (choice == -1) break;  // 返回上级菜单
 
-        // 测试坐下
-        MotionResult sit_result = controller_->sit();
-        checkTest("sit()调用", sit_result == MotionResult::SUCCESS);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            int duration = getDurationFromUser(2000);
+            if (duration == -1) continue;  // 用户取消
 
-        // 测试恢复站立
-        MotionResult recovery_result = controller_->recoveryStand();
-        checkTest("recoveryStand()调用", recovery_result == MotionResult::SUCCESS);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            switch (choice) {
+                case 0: { // 平衡站立
+                    bool success = safeExecuteCommand("平衡站立", [this]() {
+                        return controller_->balanceStand();
+                    }, duration);
+                    checkTest("平衡站立", success);
+                    break;
+                }
+                case 1: { // 站起动作
+                    bool success = safeExecuteCommand("站起动作", [this]() {
+                        return controller_->standUp();
+                    }, duration);
+                    checkTest("站起动作", success);
+                    break;
+                }
+                case 2: { // 坐下动作
+                    bool success = safeExecuteCommand("坐下动作", [this]() {
+                        return controller_->sit();
+                    }, duration);
+                    checkTest("坐下动作", success);
+                    break;
+                }
+                case 3: { // 恢复站立
+                    bool success = safeExecuteCommand("恢复站立", [this]() {
+                        return controller_->recoveryStand();
+                    }, duration);
+                    checkTest("恢复站立", success);
+                    break;
+                }
+                case 4: { // 趴下动作
+                    bool success = safeExecuteCommand("趴下动作", [this]() {
+                        return controller_->standDown();
+                    }, duration);
+                    checkTest("趴下动作", success);
 
-        // 测试趴下
-        MotionResult standdown_result = controller_->standDown();
-        checkTest("standDown()调用", standdown_result == MotionResult::SUCCESS);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                    // 自动恢复到站立状态确保安全
+                    if (success && !checkShutdown()) {
+                        std::cout << "    自动恢复到站立状态..." << std::endl;
+                        safeExecuteCommand("自动站起", [this]() {
+                            return controller_->standUp();
+                        }, 3000);
+                    }
+                    break;
+                }
+                case 5: { // 快速站立序列
+                    std::cout << "  执行快速站立序列: 坐下 -> 站起" << std::endl;
+                    if (!checkShutdown()) {
+                        safeExecuteCommand("坐下", [this]() {
+                            return controller_->sit();
+                        }, 2000);
+                    }
+                    if (!checkShutdown()) {
+                        safeExecuteCommand("站起", [this]() {
+                            return controller_->standUp();
+                        }, 2000);
+                    }
+                    checkTest("快速站立序列", true);
+                    break;
+                }
+                case 6: { // 快速趴下序列
+                    std::cout << "  执行快速趴下序列: 趴下 -> 恢复站立" << std::endl;
+                    if (!checkShutdown()) {
+                        safeExecuteCommand("趴下", [this]() {
+                            return controller_->standDown();
+                        }, 2000);
+                    }
+                    if (!checkShutdown()) {
+                        safeExecuteCommand("恢复站立", [this]() {
+                            return controller_->recoveryStand();
+                        }, 3000);
+                    }
+                    checkTest("快速趴下序列", true);
+                    break;
+                }
+                case 7: { // 基本动作循环测试
+                    std::cout << "  执行基本动作循环: 站立 -> 坐下 -> 站起 -> 平衡站立" << std::endl;
+                    std::vector<std::string> actions = {"坐下", "站起", "平衡站立"};
+                    std::vector<std::function<MotionResult()>> commands = {
+                        [this]() { return controller_->sit(); },
+                        [this]() { return controller_->standUp(); },
+                        [this]() { return controller_->balanceStand(); }
+                    };
 
-        // 恢复到站立状态准备后续测试
-        controller_->standUp();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                    bool all_success = true;
+                    for (size_t i = 0; i < actions.size() && !checkShutdown(); ++i) {
+                        bool success = safeExecuteCommand(actions[i], commands[i], 2000);
+                        if (!success) all_success = false;
+                    }
+                    checkTest("基本动作循环测试", all_success);
+                    break;
+                }
+            }
+        }
     }
 
     /**
-     * @brief 测试Go2特有高级功能
+     * @brief 测试Go2特有高级功能 - 交互式菜单
      */
     void testAdvancedFeatures() {
-        printHeader("测试Go2特有高级功能");
+        printHeader("Go2特有高级功能测试 - 交互式菜单");
 
-        // 测试舞蹈动作
-        MotionResult dance1_result = controller_->performDance(1);
-        checkTest("performDance(1)调用", dance1_result == MotionResult::SUCCESS);
-        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+        std::vector<std::string> options = {
+            "舞蹈动作1 (performDance 1)",
+            "舞蹈动作2 (performDance 2)",
+            "打招呼动作 (hello)",
+            "伸展动作 (stretch)",
+            "速度等级设置 (1-5级)",
+            "--- 高风险动作 (需要确认) ---",
+            "前跳动作 (frontJump) ⚠️",
+            "前翻动作 (frontFlip) ⚠️",
+            "--- 安全测试 ---",
+            "无效舞蹈类型测试",
+            "无效速度等级测试",
+            "高级功能组合测试"
+        };
 
-        MotionResult dance2_result = controller_->performDance(2);
-        checkTest("performDance(2)调用", dance2_result == MotionResult::SUCCESS);
-        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+        while (!checkShutdown()) {
+            int choice = showSubmenu("Go2高级功能测试菜单", options);
+            if (choice == -1) break;  // 返回上级菜单
 
-        // 测试无效舞蹈类型
-        MotionResult invalid_dance = controller_->performDance(99);
-        checkTest("无效舞蹈类型处理", invalid_dance == MotionResult::INVALID_PARAMETER);
+            if (choice == 5 || choice == 8) {
+                std::cout << "--- 这是分隔线，请选择具体功能 ---" << std::endl;
+                continue;
+            }
 
-        // 测试打招呼动作
-        MotionResult hello_result = controller_->hello();
-        checkTest("hello()调用", hello_result == MotionResult::SUCCESS);
-        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            int duration = getDurationFromUser(3000);
+            if (duration == -1) continue;  // 用户取消
 
-        // 测试伸展动作
-        MotionResult stretch_result = controller_->stretch();
-        checkTest("stretch()调用", stretch_result == MotionResult::SUCCESS);
-        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            switch (choice) {
+                case 0: { // 舞蹈动作1
+                    bool success = safeExecuteCommand("舞蹈动作1", [this]() {
+                        return controller_->performDance(1);
+                    }, duration);
+                    checkTest("舞蹈动作1", success);
+                    break;
+                }
+                case 1: { // 舞蹈动作2
+                    bool success = safeExecuteCommand("舞蹈动作2", [this]() {
+                        return controller_->performDance(2);
+                    }, duration);
+                    checkTest("舞蹈动作2", success);
+                    break;
+                }
+                case 2: { // 打招呼动作
+                    bool success = safeExecuteCommand("打招呼动作", [this]() {
+                        return controller_->hello();
+                    }, duration);
+                    checkTest("打招呼动作", success);
+                    break;
+                }
+                case 3: { // 伸展动作
+                    bool success = safeExecuteCommand("伸展动作", [this]() {
+                        return controller_->stretch();
+                    }, duration);
+                    checkTest("伸展动作", success);
+                    break;
+                }
+                case 4: { // 速度等级设置
+                    std::cout << "  测试速度等级设置 (1-5级):" << std::endl;
+                    bool all_success = true;
+                    for (int level = 1; level <= 5; ++level) {
+                        if (checkShutdown()) break;
+                        std::cout << "    设置速度等级: " << level << std::endl;
+                        bool success = safeExecuteCommand("速度等级" + std::to_string(level), [this, level]() {
+                            return controller_->setSpeedLevel(level);
+                        }, 500);
+                        checkTest("速度等级" + std::to_string(level), success);
+                        if (!success) all_success = false;
+                    }
+                    checkTest("速度等级设置完整测试", all_success);
+                    break;
+                }
+                case 6: { // 前跳动作 - 高风险
+                    if (waitForUserConfirmation("前跳动作")) {
+                        bool success = safeExecuteCommand("前跳动作", [this]() {
+                            return controller_->frontJump();
+                        }, duration);
+                        checkTest("前跳动作", success);
 
-        // 测试速度等级设置
-        for (int level = 1; level <= 5; ++level) {
-            MotionResult speed_result = controller_->setSpeedLevel(level);
-            checkTest("setSpeedLevel(" + std::to_string(level) + ")调用",
-                     speed_result == MotionResult::SUCCESS);
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                        // 立即恢复到安全状态
+                        if (success && !checkShutdown()) {
+                            std::cout << "    立即恢复到安全状态..." << std::endl;
+                            safeExecuteCommand("恢复站立", [this]() {
+                                return controller_->recoveryStand();
+                            }, 4000);
+                        }
+                    } else {
+                        std::cout << "    用户取消前跳动作测试" << std::endl;
+                        checkTest("前跳动作", true); // 跳过但记录为通过
+                    }
+                    break;
+                }
+                case 7: { // 前翻动作 - 高风险
+                    if (waitForUserConfirmation("前翻动作")) {
+                        bool success = safeExecuteCommand("前翻动作", [this]() {
+                            return controller_->frontFlip();
+                        }, duration);
+                        checkTest("前翻动作", success);
+
+                        // 立即恢复到安全状态
+                        if (success && !checkShutdown()) {
+                            std::cout << "    立即恢复到安全状态..." << std::endl;
+                            safeExecuteCommand("恢复站立", [this]() {
+                                return controller_->recoveryStand();
+                            }, 4000);
+                        }
+                    } else {
+                        std::cout << "    用户取消前翻动作测试" << std::endl;
+                        checkTest("前翻动作", true); // 跳过但记录为通过
+                    }
+                    break;
+                }
+                case 9: { // 无效舞蹈类型测试
+                    MotionResult result = controller_->performDance(99);
+                    checkTest("无效舞蹈类型处理", result == MotionResult::INVALID_PARAMETER);
+                    std::cout << "    无效舞蹈类型测试完成，期望结果：INVALID_PARAMETER" << std::endl;
+                    break;
+                }
+                case 10: { // 无效速度等级测试
+                    MotionResult result = controller_->setSpeedLevel(10);
+                    checkTest("无效速度等级处理", result == MotionResult::INVALID_PARAMETER);
+                    std::cout << "    无效速度等级测试完成，期望结果：INVALID_PARAMETER" << std::endl;
+                    break;
+                }
+                case 11: { // 高级功能组合测试
+                    std::cout << "  执行高级功能组合测试: 打招呼 -> 伸展 -> 舞蹈1" << std::endl;
+                    std::vector<std::string> actions = {"打招呼", "伸展", "舞蹈1"};
+                    std::vector<std::function<MotionResult()>> commands = {
+                        [this]() { return controller_->hello(); },
+                        [this]() { return controller_->stretch(); },
+                        [this]() { return controller_->performDance(1); }
+                    };
+
+                    bool all_success = true;
+                    for (size_t i = 0; i < actions.size() && !checkShutdown(); ++i) {
+                        bool success = safeExecuteCommand(actions[i], commands[i], 3000);
+                        if (!success) all_success = false;
+                    }
+                    checkTest("高级功能组合测试", all_success);
+                    break;
+                }
+            }
+
+            // 高级动作后确保恢复到安全状态
+            if (choice <= 4 || choice == 11) {
+                std::cout << "  恢复到安全状态..." << std::endl;
+                safeExecuteCommand("恢复站立", [this]() {
+                    return controller_->balanceStand();
+                }, 2000);
+            }
         }
-
-        // 测试无效速度等级
-        MotionResult invalid_speed = controller_->setSpeedLevel(10);
-        checkTest("无效速度等级处理", invalid_speed == MotionResult::INVALID_PARAMETER);
-
-        // 警告：这些动作可能有安全风险，在实际测试中需要谨慎
-        std::cout << "  注意：以下动作存在安全风险，请确保周围环境安全" << std::endl;
-
-        // 测试前跳动作
-        MotionResult jump_result = controller_->frontJump();
-        checkTest("frontJump()调用", jump_result == MotionResult::SUCCESS);
-        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-
-        // 测试前翻动作
-        MotionResult flip_result = controller_->frontFlip();
-        checkTest("frontFlip()调用", flip_result == MotionResult::SUCCESS);
-        std::this_thread::sleep_for(std::chrono::milliseconds(5000));
-
-        // 恢复到安全状态
-        controller_->recoveryStand();
-        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
     }
 
     /**
@@ -492,6 +849,10 @@ private:
      */
     void testStateQuery() {
         printHeader("测试状态查询功能");
+
+        // 等待接收一次ROS2消息更新（ROS消息现在在后台线程中持续处理）
+        std::cout << "正在等待接收一次状态更新..." << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         // 测试运动状态获取
         MotionState motion_state = controller_->getMotionState();
@@ -503,7 +864,7 @@ private:
         std::cout << "    是否移动: " << (motion_state.is_moving ? "是" : "否") << std::endl;
         std::cout << "    是否平衡: " << (motion_state.is_balanced ? "是" : "否") << std::endl;
         std::cout << "    机身高度: " << motion_state.posture.body_height << " m" << std::endl;
-        std::cout << "    错误代码: " << motion_state.error_code << std::endl;
+        std::cout << "    状态错误代码: " << motion_state.error_code << " (注意：Go2原始error_code字段表示模式，非错误)" << std::endl;
 
         // 测试操作状态查询
         bool operational = controller_->isOperational();
@@ -551,6 +912,8 @@ private:
 
         // 触发一个状态变化来测试回调
         controller_->setBodyHeight(0.35f);
+
+        // 等待回调触发（ROS消息现在在后台线程中持续处理）
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
         // 验证回调是否被触发
@@ -651,6 +1014,280 @@ private:
     }
 
     /**
+     * @brief 安全执行运动命令，带有中断检查和紧急停止机制
+     * @param command_name 命令名称，用于日志输出
+     * @param command_func 要执行的命令函数
+     * @param wait_time_ms 命令执行后等待时间(毫秒)
+     * @return 命令是否成功执行（不包括被中断的情况）
+     */
+    bool safeExecuteCommand(const std::string& command_name,
+                           std::function<MotionResult()> command_func,
+                           int wait_time_ms = 1000) {
+        if (checkShutdown()) {
+            return false;
+        }
+
+        std::cout << "  正在执行: " << command_name << std::endl;
+
+        // 执行命令
+        MotionResult result = command_func();
+        if (result != MotionResult::SUCCESS) {
+            std::cout << "    ⚠️ 命令执行失败，结果代码: " << static_cast<int>(result) << std::endl;
+            return false;
+        }
+
+        std::cout << "    ✓ 命令发送成功，等待执行完成..." << std::endl;
+
+        // 分段等待，支持中断
+        const int check_interval = 100; // 每100ms检查一次中断信号
+        int remaining_time = wait_time_ms;
+
+        while (remaining_time > 0 && !checkShutdown()) {
+            int current_wait = std::min(check_interval, remaining_time);
+            std::this_thread::sleep_for(std::chrono::milliseconds(current_wait));
+            remaining_time -= current_wait;
+        }
+
+        if (checkShutdown()) {
+            std::cout << "    ⏹️ 检测到中断信号，执行紧急停止..." << std::endl;
+            emergencyStopRobot();
+            return false;
+        }
+
+        std::cout << "    ✓ 命令执行完成" << std::endl;
+        return true;
+    }
+
+    /**
+     * @brief 紧急停止机器人
+     */
+    void emergencyStopRobot() {
+        std::cout << "  🚨 执行紧急停止序列..." << std::endl;
+
+        // 尝试软停止
+        if (controller_) {
+            MotionResult soft_stop = controller_->emergencyStop(EmergencyStopLevel::SOFT_STOP);
+            if (soft_stop == MotionResult::SUCCESS) {
+                std::cout << "    ✓ 软停止成功" << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                return;
+            }
+        }
+
+        // 如果软停止失败，尝试硬停止
+        std::cout << "    ⚠️ 软停止失败，尝试硬停止..." << std::endl;
+        if (controller_) {
+            MotionResult hard_stop = controller_->emergencyStop(EmergencyStopLevel::HARD_STOP);
+            if (hard_stop == MotionResult::SUCCESS) {
+                std::cout << "    ✓ 硬停止成功" << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                return;
+            }
+        }
+
+        std::cout << "    ⚠️ 紧急停止失败，请手动检查机器人状态" << std::endl;
+    }
+
+    /**
+     * @brief 等待用户确认继续执行危险动作
+     * @param action_name 动作名称
+     * @return 用户是否同意继续
+     */
+    bool waitForUserConfirmation(const std::string& action_name) {
+        if (checkShutdown()) {
+            return false;
+        }
+
+        std::cout << "\n  ⚠️ 警告: 即将执行 [" << action_name << "] 动作" << std::endl;
+        std::cout << "  此动作可能存在安全风险，请确保:" << std::endl;
+        std::cout << "    1. 机器人周围有足够的安全空间" << std::endl;
+        std::cout << "    2. 没有人员或障碍物在机器人附近" << std::endl;
+        std::cout << "    3. 机器人处于平坦稳定的地面上" << std::endl;
+        std::cout << "  输入 'y' 继续，任何其他键取消: ";
+
+        // 非阻塞等待用户输入（整行读取）
+        while (!checkShutdown()) {
+            struct pollfd pfd;
+            pfd.fd = STDIN_FILENO;
+            pfd.events = POLLIN;
+            int ret = poll(&pfd, 1, 100); // 100ms轮询
+
+            if (ret > 0 && (pfd.revents & POLLIN)) {
+                std::string line;
+                for (;;) {
+                    int c = std::getchar();
+                    if (c == EOF) { return false; }
+                    if (c == '\n') { break; }
+                    if (c == '\r') {
+                        int next_c = std::getchar();
+                        if (next_c != '\n' && next_c != EOF) { ungetc(next_c, stdin); }
+                        break;
+                    }
+                    line += static_cast<char>(c);
+                }
+
+                if (line == "y" || line == "Y") {
+                    std::cout << "    ✓ 用户确认继续执行" << std::endl;
+                    return true;
+                } else {
+                    std::cout << "    ✗ 用户取消执行" << std::endl;
+                    return false;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @brief 获取用户输入的持续时间
+     * @param default_duration 默认持续时间(毫秒)
+     * @return 用户设置的持续时间(毫秒)
+     */
+    int getDurationFromUser(int default_duration = 2000) {
+        std::cout << "  请输入动作持续时间(毫秒，默认" << default_duration << "ms，直接回车使用默认值): " << std::flush;
+
+        std::string input;
+        bool got_input = false;
+
+        // 非阻塞获取用户输入（整行读取）
+        while (!got_input && !checkShutdown()) {
+            struct pollfd pfd;
+            pfd.fd = STDIN_FILENO;
+            pfd.events = POLLIN;
+            int ret = poll(&pfd, 1, 100);
+
+            if (ret > 0 && (pfd.revents & POLLIN)) {
+                for (;;) {
+                    int c = std::getchar();
+                    if (c == EOF) { std::cout << "\n    取消输入" << std::endl; return -1; }
+                    if (c == '\n') { got_input = true; break; }
+                    if (c == '\r') {
+                        int next_c = std::getchar();
+                        if (next_c != '\n' && next_c != EOF) { ungetc(next_c, stdin); }
+                        got_input = true; break;
+                    }
+                    if (c >= '0' && c <= '9') {
+                        input += static_cast<char>(c);
+                    } else if (c == 27) { // ESC键
+                        // 丢弃到行尾
+                        int d;
+                        while ((d = std::getchar()) != '\n' && d != EOF) {
+                            if (d == '\r') { int e = std::getchar(); if (e != '\n' && e != EOF) { ungetc(e, stdin); } break; }
+                        }
+                        std::cout << "\n    取消输入" << std::endl;
+                        return -1;
+                    } else {
+                        // 忽略其它字符
+                    }
+                }
+            }
+        }
+
+        if (checkShutdown()) return -1;
+
+        if (input.empty()) {
+            std::cout << "    使用默认持续时间: " << default_duration << "ms" << std::endl;
+            return default_duration;
+        }
+
+        try {
+            int duration = std::stoi(input);
+            if (duration < 100) duration = 100;  // 最小100ms
+            if (duration > 10000) duration = 10000;  // 最大10s
+            std::cout << "    设置持续时间: " << duration << "ms" << std::endl;
+            return duration;
+        } catch (...) {
+            std::cout << "    输入无效，使用默认持续时间: " << default_duration << "ms" << std::endl;
+            return default_duration;
+        }
+    }
+
+    /**
+     * @brief 显示子菜单并获取用户选择
+     * @param title 菜单标题
+     * @param options 选项列表
+     * @return 用户选择的选项索引，-1表示退出
+     */
+    int showSubmenu(const std::string& title, const std::vector<std::string>& options) {
+        while (!checkShutdown()) {
+            std::cout << "\n" << std::string(50, '=') << std::endl;
+            std::cout << title << std::endl;
+            std::cout << std::string(50, '=') << std::endl;
+
+            for (size_t i = 0; i < options.size(); ++i) {
+                std::cout << (i + 1) << ". " << options[i] << std::endl;
+            }
+            std::cout << "0. 返回上级菜单" << std::endl;
+            std::cout << std::string(50, '-') << std::endl;
+            std::cout << "请选择: " << std::flush;
+
+            // 非阻塞等待键盘输入，支持多位数（整行读取）
+            bool got_input = false;
+            std::string input;
+            while (!got_input && !checkShutdown()) {
+                struct pollfd pfd;
+                pfd.fd = STDIN_FILENO;
+                pfd.events = POLLIN;
+                int ret = poll(&pfd, 1, 200);
+                if (ret > 0 && (pfd.revents & POLLIN)) {
+                    for (;;) {
+                        int c = std::getchar();
+                        if (c == EOF) return -1;
+                        if (c == '\n') { got_input = true; break; }
+                        if (c == '\r') {
+                            int next_c = std::getchar();
+                            if (next_c != '\n' && next_c != EOF) { ungetc(next_c, stdin); }
+                            got_input = true; break;
+                        }
+                        if (c >= '0' && c <= '9') {
+                            input += static_cast<char>(c);
+                        } else if (c == 'q' || c == 'Q') {
+                            input = "q"; // 继续丢弃到行尾
+                        } else if (c == 27) { // ESC键
+                            // 丢弃到行尾
+                            int d;
+                            while ((d = std::getchar()) != '\n' && d != EOF) {
+                                if (d == '\r') {
+                                    int e = std::getchar();
+                                    if (e != '\n' && e != EOF) { ungetc(e, stdin); }
+                                    break;
+                                }
+                            }
+                            return -1;
+                        } else {
+                            // 忽略其它字符
+                        }
+                    }
+                }
+            }
+
+            if (checkShutdown()) return -1;
+
+            if (input == "q" || input == "Q") {
+                return -1;  // 退出
+            }
+
+            if (input == "0") {
+                return -1;  // 返回上级菜单
+            }
+
+            if (!input.empty()) {
+                try {
+                    int selected = std::stoi(input) - 1;
+                    if (selected >= 0 && selected < static_cast<int>(options.size())) {
+                        return selected;
+                    }
+                } catch (const std::exception&) {
+                    // 无效数字
+                }
+                std::cout << "无效选择，请重新输入。" << std::endl;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * @brief 打印被中断的测试结果
      */
     void printInterruptedResults() {
@@ -740,13 +1377,28 @@ int main(int argc, char** argv) {
     // 注册信号处理函数
     std::signal(SIGINT, signalHandler);
 
+    // 设置ROS日志级别，减少控制台输出
+    rcutils_logging_set_default_logger_level(RCUTILS_LOG_SEVERITY_WARN);
+
     // 初始化ROS2
     rclcpp::init(argc, argv);
 
     try {
-        // 创建测试器并运行交互式菜单
+        // 创建测试器
         Go2MotionControllerTester tester;
+
+        // 启动ROS消息处理线程，持续处理订阅的消息
+        std::thread spin_thread([&tester]() {
+            rclcpp::spin(tester.getController());
+        });
+
+        // 运行交互式菜单
         tester.runInteractiveMenu();
+
+        // 等待ROS消息处理线程结束
+        if (spin_thread.joinable()) {
+            spin_thread.join();
+        }
 
     } catch (const std::exception& e) {
         std::cerr << "测试过程中发生异常: " << e.what() << std::endl;

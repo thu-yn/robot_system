@@ -479,15 +479,13 @@ void Go2StateMonitor::sportModeStateCallback(const unitree_go::msg::SportModeSta
     auto new_robot_state = convertGo2StateToRobotState(msg);
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        current_error_code_ = msg->error_code;
+        // 注意：error_code实际表示当前模式，不是错误代码
+        // current_error_code_ = msg->error_code;
     }
     updateRobotState(new_robot_state);
     updateFootPositionAndVelocity(msg);
 
-    if (msg->error_code != 0) {
-        triggerErrorCallback(msg->error_code, "Go2 sport system error: " + std::to_string(msg->error_code));
-    }
-    RCLCPP_DEBUG(this->get_logger(), "Received Go2 sport state update. Mode: %d, Error Code: %d",
+    RCLCPP_DEBUG(this->get_logger(), "Received Go2 sport state update. Mode: %d, Current Mode Code: %d",
                 msg->mode, msg->error_code);
 }
 
@@ -935,7 +933,6 @@ void Go2StateMonitor::triggerErrorCallback(uint32_t error_code, const std::strin
 robot_base_interfaces::state_interface::RobotState Go2StateMonitor::convertGo2StateToRobotState(
     const unitree_go::msg::SportModeState::SharedPtr& sport_state) const {
     if (!sport_state) return robot_base_interfaces::state_interface::RobotState::UNKNOWN;
-    if (sport_state->error_code != 0) return robot_base_interfaces::state_interface::RobotState::ERROR;
 
     switch (sport_state->mode) {
         case 0: return robot_base_interfaces::state_interface::RobotState::STANDBY;

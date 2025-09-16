@@ -213,15 +213,15 @@ public:
     ConversionResult convertBmsState(
         const unitree_go::msg::BmsState& go2_bms,
         robot_base_interfaces::power_interface::BatteryInfo& unified_battery) const;
-    
+
     /**
-     * @brief 转换电池健康状态
-     * @param go2_status Go2电池状态码
-     * @return 统一电池健康状态
+     * @brief 根据BMS数据推断电池健康状态
+     * @param go2_bms Go2 BMS状态数据
+     * @return 推断的电池健康状态
      */
-    robot_base_interfaces::power_interface::BatteryHealth 
-    convertBatteryHealth(uint32_t go2_status) const;
-    
+    robot_base_interfaces::power_interface::BatteryHealth
+    inferBatteryHealthFromBms(const unitree_go::msg::BmsState& go2_bms) const;
+
     /**
      * @brief 转换充电状态
      * @param go2_charging_status Go2充电状态

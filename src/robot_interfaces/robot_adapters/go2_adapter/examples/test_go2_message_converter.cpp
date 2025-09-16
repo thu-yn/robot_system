@@ -13,6 +13,7 @@
  * 用于直接实例化类并验证各个转换函数的正常工作。
  */
 
+#include <ostream>
 #include <rclcpp/rclcpp.hpp>
 #include <memory>
 #include <iostream>
@@ -98,7 +99,7 @@ public:
         std::cout << "0. 运行所有测试" << std::endl;
         std::cout << "q. 退出程序" << std::endl;
         std::cout << std::string(60, '-') << std::endl;
-        std::cout << "请输入选择: ";
+        std::cout << "请输入选择: " << std::flush;
     }
 
     /**
@@ -454,7 +455,7 @@ private:
         }
 
         // 测试电池健康状态转换
-        auto health = converter_->convertBatteryHealth(2);
+        auto health = converter_->inferBatteryHealthFromBms(go2_bms);
         checkTest("电池健康状态转换", health == robot_base_interfaces::power_interface::BatteryHealth::GOOD);
 
         // 测试充电状态转换
