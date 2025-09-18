@@ -1,0 +1,141 @@
+# =============================================================================
+# Go2 Adapter Unified Configuration File
+# =============================================================================
+# 统一的Go2适配器配置文件，包含所有模块的参数设置
+# 文件路径: src/robot_interfaces/robot_adapters/go2_adapter/config/go2_adapter_config.yaml
+
+# =============================================================================
+# 通信模块配置 (go2_communication.hpp)
+# =============================================================================
+communication:
+  network:
+    robot_ip: "192.168.123.18"        # Go2机器人的默认IP地址
+    local_ip: "192.168.123.99"        # 本地设备的IP地址
+    network_interface: "enp129s0"     # 默认使用的网络接口
+
+  dds:
+    domain_id: 0                      # DDS域ID
+
+  connection:
+    timeout_ms: 10000                 # 连接超时时间（毫秒）
+    reconnect_interval_ms: 5000       # 自动重连间隔（毫秒）
+    max_reconnect_attempts: 0         # 最大重连次数（0为无限）
+
+# =============================================================================
+# 消息转换器配置 (go2_message_converter.hpp)
+# =============================================================================
+message_converter:
+  # 转换选项配置
+  conversion_options:
+    validate_ranges: true             # 是否验证数值范围
+    fill_missing_data: true           # 是否填充缺失数据
+    preserve_timestamps: true         # 是否保持时间戳
+    default_timeout_s: 1.0            # 默认超时时间(秒)
+    use_go2_coordinate_frame: true    # 使用Go2坐标系
+    enable_go2_extensions: true       # 启用Go2扩展功能
+    strict_validation: false          # 严格验证模式
+
+  # 消息缓冲区大小配置
+  buffer_sizes:
+    sport_mode_state: 10              # 运动模式状态缓冲区大小
+    low_state: 10                     # 底层状态缓冲区大小
+    bms_state: 10                     # 电池管理状态缓冲区大小
+    point_cloud: 5                    # 点云数据缓冲区大小（数据量大，不宜过大）
+    imu_data: 20                      # IMU数据缓冲区大小
+    odometry: 10                      # 里程计数据缓冲区大小
+
+  # 数值验证范围配置
+  validation_ranges:
+    # 速度范围验证 (m/s, rad/s)
+    velocity:
+      linear_x_max: 1.5               # 最大前进速度
+      linear_y_max: 0.5               # 最大侧向速度
+      angular_z_max: 2.0              # 最大角速度
+      movement_threshold: 0.01        # 运动状态判断速度阈值
+
+    # 姿态范围验证 (弧度)
+    posture:
+      roll_max: 0.5                   # 最大翻滚角
+      pitch_max: 0.5                  # 最大俯仰角
+      yaw_max: 3.14159                # 最大偏航角
+      body_height_min: 0.05           # 最小机身高度
+      body_height_max: 0.4            # 最大机身高度
+
+    # 电池参数验证
+    battery:
+      voltage_min: 20.0               # 最小电池电压 (V)
+      voltage_max: 30.0               # 最大电池电压 (V)
+      current_max: 30.0               # 最大电流 (A)
+      temperature_min: -10.0          # 最小工作温度 (°C)
+      temperature_max: 60.0           # 最大工作温度 (°C)
+      capacity_min: 0.0               # 最小容量百分比
+      capacity_max: 100.0             # 最大容量百分比
+
+    # 传感器阈值配置
+    sensor:
+      quaternion_tolerance: 0.1       # 四元数模长容差
+      foot_contact_threshold: 10.0    # 足端接触力阈值 (N)
+      foot_force_min: -100.0          # 最小足端力 (N)
+      foot_force_max: 1000.0          # 最大足端力 (N)
+
+    # 控制器阈值配置
+    controller:
+      deadzone: 0.05                  # 控制器摇杆死区
+      activity_threshold: 0.01        # 控制器活动检测阈值
+      stick_range: 1.0                # 摇杆值范围
+
+    # 里程计参数配置
+    odometry:
+      position_covariance: 0.1        # 位置协方差
+      orientation_covariance: 0.1     # 角度协方差
+      velocity_covariance: 0.1        # 速度协方差
+
+  # 坐标系转换配置
+  coordinate_transforms:
+    # Go2坐标系到ROS坐标系的变换矩阵 (3x3)
+    go2_to_ros_matrix:
+      - [1.0, 0.0, 0.0]               # X轴变换
+      - [0.0, 1.0, 0.0]               # Y轴变换
+      - [0.0, 0.0, 1.0]               # Z轴变换
+
+    # ROS坐标系到Go2坐标系的变换矩阵 (3x3)
+    ros_to_go2_matrix:
+      - [1.0, 0.0, 0.0]               # X轴变换
+      - [0.0, 1.0, 0.0]               # Y轴变换
+      - [0.0, 0.0, 1.0]               # Z轴变换
+
+  # 类型映射配置
+  type_mappings:
+    # Go2运动模式到统一运动模式的映射
+    motion_modes:
+      0: "IDLE"                       # 空闲模式
+      1: "WALK"                       # 行走模式
+      2: "TROT"                       # 小跑模式
+      3: "RUN"                        # 跑步模式
+      4: "CLIMB_STAIR"                # 爬楼梯模式
+      5: "DOWN_STAIR"                 # 下楼梯模式
+
+    # Go2步态类型到统一步态类型的映射
+    gait_types:
+      0: "STAND"                      # 站立
+      1: "TROT"                       # 小跑
+      2: "WALK"                       # 行走
+      3: "BOUND"                      # 跳跃
+
+    # Go2电池健康状态映射
+    battery_health:
+      0: "UNKNOWN"                    # 未知状态
+      1: "GOOD"                       # 良好
+      2: "OVERHEAT"                   # 过热
+      3: "DEAD"                       # 耗尽
+      4: "OVER_VOLTAGE"               # 过压
+      5: "UNSPECIFIED_FAILURE"        # 未指定故障
+      6: "COLD"                       # 过冷
+
+    # Go2充电状态映射
+    charging_states:
+      0: "UNKNOWN"                    # 未知状态
+      1: "CHARGING"                   # 充电中
+      2: "DISCHARGING"                # 放电中
+      3: "NOT_CHARGING"               # 未充电
+      4: "CHARGE_FAULT"               # 充电故障

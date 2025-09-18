@@ -416,14 +416,6 @@ private:
     
     // ============= ROS2通信组件 =============
 
-    /** @brief Go2运动状态订阅器 */
-    rclcpp::Subscription<unitree_go::msg::SportModeState>::SharedPtr sport_state_sub_;
-
-    /** @brief Go2低级状态订阅器 */
-    rclcpp::Subscription<unitree_go::msg::LowState>::SharedPtr low_state_sub_;
-
-    // 注意：Go2机器人没有独立的BMS状态话题，电池状态信息包含在LowState中
-
     /** @brief 状态监控定时器 */
     rclcpp::TimerBase::SharedPtr monitoring_timer_;
 
@@ -454,7 +446,28 @@ private:
     
     /** @brief 详细状态回调函数 */
     std::function<void(const robot_base_interfaces::state_interface::DetailedRobotState&)> detailed_state_callback_;
-    
+
+    // ============= 数据记录相关成员变量 =============
+
+    /** @brief 数据记录状态标志 */
+    bool is_recording_;
+
+    /** @brief 数据记录开始时间 */
+    std::chrono::steady_clock::time_point recording_start_time_;
+
+    /** @brief 数据记录持续时间 (秒)，0表示持续记录 */
+    uint32_t recording_duration_;
+
+    /** @brief 记录的状态数据缓存 */
+    mutable std::mutex recording_mutex_;
+    std::vector<robot_base_interfaces::state_interface::DetailedRobotState> recorded_states_;
+
+    /** @brief 数据记录定时器 */
+    rclcpp::TimerBase::SharedPtr recording_timer_;
+
+    /** @brief 数据记录频率 (Hz) */
+    static constexpr float RECORDING_FREQUENCY = 50.0f;
+
     // ============= 私有方法声明 =============
     
     /**
@@ -473,8 +486,6 @@ private:
      * @param msg 接收到的LowState消息
      */
     void lowStateCallback(const unitree_go::msg::LowState::SharedPtr msg);
-    
-    // 注意：电池状态处理由go2_power_manager.cpp负责，这里不需要相关函数
     
     /**
      * @brief 监控定时器回调函数
@@ -546,6 +557,50 @@ private:
      * @param sport_state Go2运动状态
      */
     void updateFootPositionAndVelocity(const unitree_go::msg::SportModeState::SharedPtr& sport_state);
+
+    /**
+     * @brief 基于运动状态消息评估健康等级
+     * @param msg Go2运动状态消息
+     */
+    void evaluateHealthFromSportState(const unitree_go::msg::SportModeState::SharedPtr& msg);
+
+    /**
+     * @brief 基于底层状态消息评估健康等级
+     * @param msg Go2底层状态消息
+     */
+    void evaluateHealthFromLowState(const unitree_go::msg::LowState::SharedPtr& msg);
+
+    /**
+     * @brief 数据记录定时器回调函数
+     */
+    void recordingTimerCallback();
+
+    /**
+     * @brief 检查数据记录是否应该停止
+     * @return true 应该停止，false 继续记录
+     */
+    bool shouldStopRecording() const;
+
+    /**
+     * @brief 导出数据为JSON格式
+     * @param file_path 文件路径
+     * @return true 成功，false 失败
+     */
+    bool exportToJSON(const std::string& file_path) const;
+
+    /**
+     * @brief 导出数据为CSV格式
+     * @param file_path 文件路径
+     * @return true 成功，false 失败
+     */
+    bool exportToCSV(const std::string& file_path) const;
+
+    /**
+     * @brief 导出数据为二进制格式
+     * @param file_path 文件路径
+     * @return true 成功，false 失败
+     */
+    bool exportToBinary(const std::string& file_path) const;
 
     /**
      * @brief 检查运动模式变化并生成相应告警

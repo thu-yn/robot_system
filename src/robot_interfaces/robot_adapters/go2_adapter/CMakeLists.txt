@@ -35,6 +35,10 @@ find_package(capability_manager REQUIRED)
 find_package(unitree_go REQUIRED)
 find_package(unitree_api REQUIRED)
 
+# YAML配置文件解析库
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(YAML_CPP REQUIRED yaml-cpp)
+
 # 暂时注释掉不存在的依赖包，后续实现时再添加
 # find_package(cyclonedds REQUIRED)
 # find_package(rmw_cyclonedds_cpp REQUIRED)
@@ -141,6 +145,21 @@ target_link_libraries(go2_power_manager
   go2_message_converter
 )
 
+# Go2配置管理器库
+add_library(go2_config_manager
+  src/go2_config_manager.cpp
+)
+target_include_directories(go2_config_manager PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(go2_config_manager ${DEPENDENCIES})
+if(YAML_CPP_FOUND)
+  target_link_libraries(go2_config_manager ${YAML_CPP_LIBRARIES})
+  target_include_directories(go2_config_manager PRIVATE ${YAML_CPP_INCLUDE_DIRS})
+  target_compile_options(go2_config_manager PRIVATE ${YAML_CPP_CFLAGS_OTHER})
+endif()
+
 # Go2通信管理器库
 add_library(go2_communication
   src/go2_communication.cpp
@@ -150,6 +169,7 @@ target_include_directories(go2_communication PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 ament_target_dependencies(go2_communication ${DEPENDENCIES})
+target_link_libraries(go2_communication go2_config_manager)
 
 # Go2消息转换器库
 add_library(go2_message_converter
@@ -160,6 +180,7 @@ target_include_directories(go2_message_converter PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 ament_target_dependencies(go2_message_converter ${DEPENDENCIES})
+target_link_libraries(go2_message_converter go2_config_manager)
 
 # Go2四足特技库
 add_library(go2_quadruped_tricks
@@ -170,6 +191,11 @@ target_include_directories(go2_quadruped_tricks PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 ament_target_dependencies(go2_quadruped_tricks ${DEPENDENCIES})
+
+target_link_libraries(go2_quadruped_tricks
+  go2_communication
+  go2_message_converter
+)
 
 # Go2适配器主库（集成所有组件）
 add_library(go2_adapter_lib
@@ -251,6 +277,39 @@ target_include_directories(go2_power_manager_test PUBLIC
 ament_target_dependencies(go2_power_manager_test ${DEPENDENCIES})
 target_link_libraries(go2_power_manager_test go2_power_manager)
 
+# Go2特技动作功能验证示例
+add_executable(go2_quadruped_tricks_test
+  examples/test_go2_quadruped_tricks.cpp
+)
+target_include_directories(go2_quadruped_tricks_test PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(go2_quadruped_tricks_test ${DEPENDENCIES})
+target_link_libraries(go2_quadruped_tricks_test go2_quadruped_tricks)
+
+# Go2传感器功能获取验证示例
+add_executable(go2_sensor_interface_test
+  examples/test_go2_sensor_interface.cpp
+)
+target_include_directories(go2_sensor_interface_test PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(go2_sensor_interface_test ${DEPENDENCIES})
+target_link_libraries(go2_sensor_interface_test go2_sensor_interface)
+
+# Go2状态监测功能验证示例
+add_executable(go2_state_monitor_test
+  examples/test_go2_state_monitor.cpp
+)
+target_include_directories(go2_state_monitor_test PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(go2_state_monitor_test ${DEPENDENCIES})
+target_link_libraries(go2_state_monitor_test go2_state_monitor)
+
 # ========== 单元测试构建 ==========
 # 暂时禁用测试以完成基本构建
 # if(BUILD_TESTING)
@@ -294,8 +353,9 @@ target_link_libraries(go2_power_manager_test go2_power_manager)
 
 # 安装库文件
 install(TARGETS
+  go2_config_manager
   go2_motion_controller
-  go2_sensor_interface  
+  go2_sensor_interface
   go2_state_monitor
   go2_power_manager
   go2_communication
@@ -314,6 +374,9 @@ install(TARGETS
   go2_message_converter_test
   go2_motion_controller_test
   go2_power_manager_test
+  go2_quadruped_tricks_test
+  go2_sensor_interface_test
+  go2_state_monitor_test
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -361,6 +424,7 @@ ament_export_include_directories(include)
 
 # 导出库
 ament_export_libraries(
+  go2_config_manager
   go2_motion_controller
   go2_sensor_interface
   go2_state_monitor
@@ -379,6 +443,7 @@ ament_export_targets(
 
 # 安装导出目标
 install(TARGETS
+  go2_config_manager
   go2_motion_controller
   go2_sensor_interface
   go2_state_monitor

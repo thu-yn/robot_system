@@ -289,7 +289,9 @@ robot_base_interfaces::state_interface::FootInfo Go2SensorInterface::getFootData
     if (it != cached_foot_data_.end()) {
         return it->second;
     }
-
+    else {
+        RCLCPP_ERROR(this->get_logger(), "Invalid foot id, use default foot info instead");
+    }
     // 返回默认足端信息
     robot_base_interfaces::state_interface::FootInfo foot_info;
     foot_info.foot_id = static_cast<uint8_t>(foot_id);
@@ -736,7 +738,7 @@ bool Go2SensorInterface::isSensorDataFresh(robot_base_interfaces::sensor_interfa
         return false;
     }
 
-    auto now = rclcpp::Clock().now();
+    auto now = this->now();
     auto age_ms = (now - it->second).seconds() * 1000.0;
     return age_ms <= max_age_ms;
 }

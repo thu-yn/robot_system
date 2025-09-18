@@ -27,7 +27,6 @@
 // 基础接口
 #include "robot_base_interfaces/power_interface/i_power_manager.hpp"
 #include "robot_base_interfaces/power_interface/power_types.hpp"
-#include "robot_base_interfaces/common/result.hpp"
 
 // Go2 ROS2消息类型
 #include "unitree_go/msg/bms_state.hpp"

@@ -7,6 +7,7 @@
 
 #include "robot_adapters/go2_adapter/go2_message_converter.hpp"
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <cmath>
 #include <algorithm>
 #include <chrono>
@@ -21,16 +22,101 @@ namespace go2_adapter {
 Go2MessageConverter::Go2MessageConverter() {
     // 重置为默认配置
     resetToDefaults();
+    // 确保存在配置管理器（使用空字符串表示使用默认配置）
+    config_manager_ = std::make_shared<Go2ConfigManager>("");
     // 初始化映射表和变换矩阵
     initializeMappingTables();
     initializeTransformMatrices();
 }
 
-Go2MessageConverter::Go2MessageConverter(const ConversionOptions& options) 
+Go2MessageConverter::Go2MessageConverter(const ConversionOptions& options)
     : options_(options) {
+    // 确保存在配置管理器（使用空字符串表示使用默认配置）
+    config_manager_ = std::make_shared<Go2ConfigManager>("");
     // 使用指定配置初始化映射表和变换矩阵
     initializeMappingTables();
     initializeTransformMatrices();
+}
+
+Go2MessageConverter::Go2MessageConverter(const std::string& config_file_path) {
+    // 创建配置管理器并加载配置文件
+    config_manager_ = std::make_shared<Go2ConfigManager>(config_file_path);
+
+    // 从配置管理器获取转换选项
+    if (config_manager_) {
+        const auto& converter_config = config_manager_->getMessageConverterConfig();
+        options_.validate_ranges = converter_config.conversion_options.validate_ranges;
+        options_.fill_missing_data = converter_config.conversion_options.fill_missing_data;
+        options_.preserve_timestamps = converter_config.conversion_options.preserve_timestamps;
+        options_.default_timeout_s = converter_config.conversion_options.default_timeout_s;
+        options_.use_go2_coordinate_frame = converter_config.conversion_options.use_go2_coordinate_frame;
+        options_.enable_go2_extensions = converter_config.conversion_options.enable_go2_extensions;
+        options_.strict_validation = converter_config.conversion_options.strict_validation;
+    } else {
+        resetToDefaults();
+    }
+
+    // 使用配置初始化映射表和变换矩阵
+    if (config_manager_) {
+        initializeMappingTablesFromConfig();
+        initializeTransformMatricesFromConfig();
+    } else {
+        initializeMappingTables();
+        initializeTransformMatrices();
+    }
+}
+
+Go2MessageConverter::Go2MessageConverter(const ConversionOptions& options, const std::string& config_file_path)
+    : options_(options) {
+    // 创建配置管理器并加载配置文件
+    config_manager_ = std::make_shared<Go2ConfigManager>(config_file_path);
+
+    // 从配置管理器获取转换选项，覆盖传入的选项
+    if (config_manager_) {
+        const auto& converter_config = config_manager_->getMessageConverterConfig();
+        options_.validate_ranges = converter_config.conversion_options.validate_ranges;
+        options_.fill_missing_data = converter_config.conversion_options.fill_missing_data;
+        options_.preserve_timestamps = converter_config.conversion_options.preserve_timestamps;
+        options_.default_timeout_s = converter_config.conversion_options.default_timeout_s;
+        options_.use_go2_coordinate_frame = converter_config.conversion_options.use_go2_coordinate_frame;
+        options_.enable_go2_extensions = converter_config.conversion_options.enable_go2_extensions;
+        options_.strict_validation = converter_config.conversion_options.strict_validation;
+    }
+
+    // 使用配置初始化映射表和变换矩阵
+    if (config_manager_) {
+        initializeMappingTablesFromConfig();
+        initializeTransformMatricesFromConfig();
+    } else {
+        initializeMappingTables();
+        initializeTransformMatrices();
+    }
+}
+
+Go2MessageConverter::Go2MessageConverter(std::shared_ptr<Go2ConfigManager> config_manager)
+    : config_manager_(config_manager) {
+    // 从配置管理器获取转换选项
+    if (config_manager_) {
+        const auto& converter_config = config_manager_->getMessageConverterConfig();
+        options_.validate_ranges = converter_config.conversion_options.validate_ranges;
+        options_.fill_missing_data = converter_config.conversion_options.fill_missing_data;
+        options_.preserve_timestamps = converter_config.conversion_options.preserve_timestamps;
+        options_.default_timeout_s = converter_config.conversion_options.default_timeout_s;
+        options_.use_go2_coordinate_frame = converter_config.conversion_options.use_go2_coordinate_frame;
+        options_.enable_go2_extensions = converter_config.conversion_options.enable_go2_extensions;
+        options_.strict_validation = converter_config.conversion_options.strict_validation;
+    } else {
+        resetToDefaults();
+    }
+
+    // 使用配置初始化映射表和变换矩阵
+    if (config_manager_) {
+        initializeMappingTablesFromConfig();
+        initializeTransformMatricesFromConfig();
+    } else {
+        initializeMappingTables();
+        initializeTransformMatrices();
+    }
 }
 
 Go2MessageConverter::~Go2MessageConverter() = default;
@@ -43,7 +129,80 @@ void Go2MessageConverter::setConversionOptions(const ConversionOptions& options)
 
 void Go2MessageConverter::resetToDefaults() {
     options_ = ConversionOptions{};
+    // 不要重置config_manager_，因为所有转换函数都依赖它
+    // 如果需要重新创建，应该创建一个新的默认配置管理器
+    if (!config_manager_) {
+        config_manager_ = std::make_shared<Go2ConfigManager>("");
+    }
     resetStatistics();
+}
+
+bool Go2MessageConverter::loadConfigFile(const std::string& config_file_path) {
+    try {
+        // 创建新的配置管理器
+        auto new_config_manager = std::make_shared<Go2ConfigManager>(config_file_path);
+
+        if (new_config_manager && new_config_manager->configFileExists()) {
+            config_manager_ = new_config_manager;
+
+            // 从配置管理器更新转换选项
+            const auto& converter_config = config_manager_->getMessageConverterConfig();
+            options_.validate_ranges = converter_config.conversion_options.validate_ranges;
+            options_.fill_missing_data = converter_config.conversion_options.fill_missing_data;
+            options_.preserve_timestamps = converter_config.conversion_options.preserve_timestamps;
+            options_.default_timeout_s = converter_config.conversion_options.default_timeout_s;
+            options_.use_go2_coordinate_frame = converter_config.conversion_options.use_go2_coordinate_frame;
+            options_.enable_go2_extensions = converter_config.conversion_options.enable_go2_extensions;
+            options_.strict_validation = converter_config.conversion_options.strict_validation;
+
+            // 重新初始化映射表和变换矩阵
+            initializeMappingTablesFromConfig();
+            initializeTransformMatricesFromConfig();
+
+            return true;
+        }
+    } catch (const std::exception& e) {
+        setError("Failed to load config file: " + std::string(e.what()));
+    }
+    return false;
+}
+
+bool Go2MessageConverter::reloadConfig() {
+    if (config_manager_) {
+        return config_manager_->reloadConfig() && loadConfigFile(config_manager_->getConfigFilePath());
+    }
+    return false;
+}
+
+void Go2MessageConverter::setConfigManager(std::shared_ptr<Go2ConfigManager> config_manager) {
+    config_manager_ = config_manager;
+    if (config_manager_) {
+        // 从新的配置管理器更新设置
+        const auto& converter_config = config_manager_->getMessageConverterConfig();
+        options_.validate_ranges = converter_config.conversion_options.validate_ranges;
+        options_.fill_missing_data = converter_config.conversion_options.fill_missing_data;
+        options_.preserve_timestamps = converter_config.conversion_options.preserve_timestamps;
+        options_.default_timeout_s = converter_config.conversion_options.default_timeout_s;
+        options_.use_go2_coordinate_frame = converter_config.conversion_options.use_go2_coordinate_frame;
+        options_.enable_go2_extensions = converter_config.conversion_options.enable_go2_extensions;
+        options_.strict_validation = converter_config.conversion_options.strict_validation;
+
+        // 重新初始化映射表和变换矩阵
+        initializeMappingTablesFromConfig();
+        initializeTransformMatricesFromConfig();
+    }
+}
+
+std::shared_ptr<Go2ConfigManager> Go2MessageConverter::getConfigManager() const {
+    return config_manager_;
+}
+
+const MessageConverterConfig& Go2MessageConverter::getMessageConverterConfig() const {
+    if (config_manager_) {
+        return config_manager_->getMessageConverterConfig();
+    }
+    // 如果没有配置管理器，抛出异常
+    throw std::runtime_error("No config manager available");
 }
 
 // ============= 初始化函数 =============
@@ -91,10 +250,126 @@ void Go2MessageConverter::initializeTransformMatrices() {
     transforms_.go2_to_ros = {{1.0f, 0.0f, 0.0f},
                               {0.0f, 1.0f, 0.0f},
                               {0.0f, 0.0f, 1.0f}};
-    
+
     transforms_.ros_to_go2 = {{1.0f, 0.0f, 0.0f},
                               {0.0f, 1.0f, 0.0f},
                               {0.0f, 0.0f, 1.0f}};
+}
+
+void Go2MessageConverter::initializeMappingTablesFromConfig() {
+    if (!config_manager_) {
+        // 如果没有配置管理器，使用默认映射表
+        initializeMappingTables();
+        return;
+    }
+
+    const auto& converter_config = config_manager_->getMessageConverterConfig();
+
+    // 清空现有映射表
+    motion_mode_map_.clear();
+    gait_type_map_.clear();
+    battery_health_map_.clear();
+    charging_state_map_.clear();
+
+    // 从配置加载运动模式映射
+    for (const auto& [key, value] : converter_config.type_mappings.motion_modes) {
+        if (value == "IDLE") {
+            motion_mode_map_[key] = robot_base_interfaces::motion_interface::MotionMode::IDLE;
+        } else if (value == "WALK") {
+            motion_mode_map_[key] = robot_base_interfaces::motion_interface::MotionMode::LOCOMOTION;
+        } else if (value == "TROT") {
+            motion_mode_map_[key] = robot_base_interfaces::motion_interface::MotionMode::LOCOMOTION;
+        } else if (value == "RUN") {
+            motion_mode_map_[key] = robot_base_interfaces::motion_interface::MotionMode::LOCOMOTION;
+        } else if (value == "CLIMB_STAIR") {
+            motion_mode_map_[key] = robot_base_interfaces::motion_interface::MotionMode::LOCOMOTION;
+        } else if (value == "DOWN_STAIR") {
+            motion_mode_map_[key] = robot_base_interfaces::motion_interface::MotionMode::LOCOMOTION;
+        }
+        // 可以根据需要添加更多映射
+    }
+
+    // 从配置加载步态类型映射
+    for (const auto& [key, value] : converter_config.type_mappings.gait_types) {
+        if (value == "STAND") {
+            gait_type_map_[key] = robot_base_interfaces::motion_interface::GaitType::IDLE;
+        } else if (value == "TROT") {
+            gait_type_map_[key] = robot_base_interfaces::motion_interface::GaitType::TROT;
+        } else if (value == "WALK") {
+            gait_type_map_[key] = robot_base_interfaces::motion_interface::GaitType::TROT;  // WALK映射到TROT
+        } else if (value == "BOUND") {
+            gait_type_map_[key] = robot_base_interfaces::motion_interface::GaitType::RUN;
+        }
+    }
+
+    // 从配置加载电池健康状态映射
+    for (const auto& [key, value] : converter_config.type_mappings.battery_health) {
+        if (value == "UNKNOWN") {
+            battery_health_map_[key] = robot_base_interfaces::power_interface::BatteryHealth::UNKNOWN;
+        } else if (value == "GOOD") {
+            battery_health_map_[key] = robot_base_interfaces::power_interface::BatteryHealth::GOOD;
+        } else if (value == "OVERHEAT") {
+            battery_health_map_[key] = robot_base_interfaces::power_interface::BatteryHealth::POOR;  // OVERHEAT映射到POOR
+        } else if (value == "DEAD") {
+            battery_health_map_[key] = robot_base_interfaces::power_interface::BatteryHealth::DEAD;
+        } else if (value == "OVER_VOLTAGE") {
+            battery_health_map_[key] = robot_base_interfaces::power_interface::BatteryHealth::POOR;  // OVER_VOLTAGE映射到POOR
+        } else if (value == "UNSPECIFIED_FAILURE") {
+            battery_health_map_[key] = robot_base_interfaces::power_interface::BatteryHealth::POOR;  // UNSPECIFIED_FAILURE映射到POOR
+        } else if (value == "COLD") {
+            battery_health_map_[key] = robot_base_interfaces::power_interface::BatteryHealth::FAIR;  // COLD映射到FAIR
+        }
+    }
+
+    // 从配置加载充电状态映射
+    for (const auto& [key, value] : converter_config.type_mappings.charging_states) {
+        if (value == "UNKNOWN") {
+            charging_state_map_[key] = robot_base_interfaces::power_interface::ChargingState::UNKNOWN;
+        } else if (value == "CHARGING") {
+            charging_state_map_[key] = robot_base_interfaces::power_interface::ChargingState::CHARGING;
+        } else if (value == "DISCHARGING") {
+            charging_state_map_[key] = robot_base_interfaces::power_interface::ChargingState::NOT_CHARGING;  // DISCHARGING映射到NOT_CHARGING
+        } else if (value == "NOT_CHARGING") {
+            charging_state_map_[key] = robot_base_interfaces::power_interface::ChargingState::NOT_CHARGING;
+        } else if (value == "CHARGE_FAULT") {
+            charging_state_map_[key] = robot_base_interfaces::power_interface::ChargingState::ERROR;  // CHARGE_FAULT映射到ERROR
+        }
+    }
+}
+
+void Go2MessageConverter::initializeTransformMatricesFromConfig() {
+    if (!config_manager_) {
+        // 如果没有配置管理器，使用默认变换矩阵
+        initializeTransformMatrices();
+        return;
+    }
+
+    const auto& converter_config = config_manager_->getMessageConverterConfig();
+
+    // 从配置加载Go2到ROS变换矩阵
+    if (converter_config.coordinate_transforms.go2_to_ros_matrix.size() == 3) {
+        transforms_.go2_to_ros.clear();
+        for (const auto& row : converter_config.coordinate_transforms.go2_to_ros_matrix) {
+            if (row.size() == 3) {
+                transforms_.go2_to_ros.push_back(row);
+            }
+        }
+    }
+
+    // 从配置加载ROS到Go2变换矩阵
+    if (converter_config.coordinate_transforms.ros_to_go2_matrix.size() == 3) {
+        transforms_.ros_to_go2.clear();
+        for (const auto& row : converter_config.coordinate_transforms.ros_to_go2_matrix) {
+            if (row.size() == 3) {
+                transforms_.ros_to_go2.push_back(row);
+            }
+        }
+    }
+
+    // 如果配置加载失败，回退到默认矩阵
+    if (transforms_.go2_to_ros.size() != 3 || transforms_.ros_to_go2.size() != 3) {
+        initializeTransformMatrices();
+    }
 }
 
 // ============= 基础转换函数 =============
@@ -130,19 +405,22 @@ Go2MessageConverter::inferBatteryHealthFromBms(const unitree_go::msg::BmsState& 
     // 根据BMS数据推断电池健康状态
     // Go2的BMS状态字段是工作状态，不是健康状态，需要根据其他参数推断
 
+    // 获取配置参数
+    const auto& health_config = config_manager_->getMessageConverterConfig().validation_ranges.battery_health;
+
     // 首先检查是否有严重故障状态
-    if (go2_bms.status == 11) { // ALARM 报警状态
+    if (go2_bms.status == health_config.alarm_status) { // ALARM 报警状态
         return robot_base_interfaces::power_interface::BatteryHealth::POOR;
     }
 
     // 根据充电循环次数判断健康状态
-    if (go2_bms.cycle < 100) {
+    if (go2_bms.cycle < health_config.excellent_cycles) {
         return robot_base_interfaces::power_interface::BatteryHealth::EXCELLENT;
-    } else if (go2_bms.cycle < 300) {
+    } else if (go2_bms.cycle < health_config.good_cycles) {
         return robot_base_interfaces::power_interface::BatteryHealth::GOOD;
-    } else if (go2_bms.cycle < 600) {
+    } else if (go2_bms.cycle < health_config.fair_cycles) {
         return robot_base_interfaces::power_interface::BatteryHealth::FAIR;
-    } else if (go2_bms.cycle < 1000) {
+    } else if (go2_bms.cycle < health_config.poor_cycles) {
         return robot_base_interfaces::power_interface::BatteryHealth::POOR;
     } else {
         return robot_base_interfaces::power_interface::BatteryHealth::DEAD;
@@ -167,13 +445,16 @@ Go2MessageConverter::convertChargingState(uint8_t go2_charging_status) const {
 ConversionResult Go2MessageConverter::convertSportModeState(
     const unitree_go::msg::SportModeState& go2_state,
     robot_base_interfaces::motion_interface::MotionState& unified_state) const {
-    
+
     // 记录转换开始时间，用于性能统计
     auto start_time = std::chrono::high_resolution_clock::now();
-    
+
+    // 获取配置参数（在函数开始处声明，以便catch块也能访问）
+    const auto& timing_config = config_manager_->getMessageConverterConfig().validation_ranges.timing;
+
     try {
         // 转换时间戳：Go2使用TimeSpec结构体，转换为纳秒时间戳
-        unified_state.timestamp_ns = go2_state.stamp.sec * 1000000000ULL + go2_state.stamp.nanosec;
+        unified_state.timestamp_ns = go2_state.stamp.sec * timing_config.nanoseconds_per_second + go2_state.stamp.nanosec;
         unified_state.error_code   = 0;  // 统一状态中的错误代码设为0表示正常
         
         // 转换运动模式和步态类型
@@ -206,7 +487,8 @@ ConversionResult Go2MessageConverter::convertSportModeState(
         }
         
         // 设置运动状态标志位：根据速度判断是否在运动
-        const float velocity_threshold = 0.01f; // 速度阈值
+        const auto& velocity_config = config_manager_->getMessageConverterConfig().validation_ranges.velocity;
+        const float velocity_threshold = velocity_config.movement_threshold; // 速度阈值
         unified_state.is_moving = (std::abs(unified_state.velocity.linear_x)  > velocity_threshold || 
                                    std::abs(unified_state.velocity.linear_y)  > velocity_threshold || 
                                    std::abs(unified_state.velocity.angular_z) > velocity_threshold);
@@ -218,7 +500,7 @@ ConversionResult Go2MessageConverter::convertSportModeState(
         // 记录转换成功的统计信息
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-        recordConversion("SportModeState", true, duration.count() / 1000.0);
+        recordConversion("SportModeState", true, duration.count() / 1000.0f);
         
         return ConversionResult::SUCCESS;
         
@@ -227,7 +509,7 @@ ConversionResult Go2MessageConverter::convertSportModeState(
         setError("SportModeState转换失败: " + std::string(e.what()));
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-        recordConversion("SportModeState", false, duration.count() / 1000.0);
+        recordConversion("SportModeState", false, duration.count() / 1000.0f);
         return ConversionResult::CONVERSION_ERROR;
     }
 }
@@ -239,9 +521,12 @@ ConversionResult Go2MessageConverter::convertMotionState(
     auto start_time = std::chrono::high_resolution_clock::now();
     
     try {
+        // 获取时间配置参数
+        const auto& timing_config = config_manager_->getMessageConverterConfig().validation_ranges.timing;
+
         // 转换时间戳：从纳秒时间戳转换为Go2的TimeSpec结构
-        go2_state.stamp.sec     = unified_state.timestamp_ns / 1000000000ULL;
-        go2_state.stamp.nanosec = unified_state.timestamp_ns % 1000000000ULL;
+        go2_state.stamp.sec     = unified_state.timestamp_ns / timing_config.nanoseconds_per_second;
+        go2_state.stamp.nanosec = unified_state.timestamp_ns % timing_config.nanoseconds_per_second;
         // 注意：Go2的error_code字段实际表示当前模式，不是错误代码
         // 这里应该根据具体的模式映射来设置，而不是直接赋值错误代码
         // go2_state.error_code    = unified_state.error_code;
@@ -399,15 +684,24 @@ ConversionResult Go2MessageConverter::convertMotorInfo(
             motor_info.velocity         = go2_motor.dq;
             motor_info.torque_estimated = go2_motor.tau_est;
             
+            // 获取传感器配置参数
+            const auto& sensor_config = config_manager_->getMessageConverterConfig().validation_ranges.sensor;
+
             // 根据电机温度和状态判断是否在线
-            motor_info.is_online = (go2_motor.temperature > -100.0f && 
-                                  go2_motor.temperature < 100.0f);
-            
+            motor_info.is_online = (go2_motor.temperature > sensor_config.motor_temperature_min &&
+                                  go2_motor.temperature < sensor_config.motor_temperature_max);
+
             // 数据范围验证（如果启用）
             if (options_.validate_ranges) {
-                motor_info.temperature = std::clamp(static_cast<float>(motor_info.temperature), -50.0f, 100.0f);
-                motor_info.position    = std::clamp(motor_info.position, -6.28f, 6.28f);
-                motor_info.velocity    = std::clamp(motor_info.velocity, -50.0f, 50.0f);
+                motor_info.temperature = std::clamp(static_cast<float>(motor_info.temperature),
+                                                   sensor_config.motor_temp_clamp_min,
+                                                   sensor_config.motor_temp_clamp_max);
+                motor_info.position    = std::clamp(motor_info.position,
+                                                   -sensor_config.motor_position_max,
+                                                   sensor_config.motor_position_max);
+                motor_info.velocity    = std::clamp(motor_info.velocity,
+                                                   -sensor_config.motor_velocity_max,
+                                                   sensor_config.motor_velocity_max);
             }
             
             unified_motors.push_back(motor_info);
@@ -451,15 +745,17 @@ ConversionResult Go2MessageConverter::convertFootInfo(
             foot_info.force = force_value;              // 足端力
             foot_info.force_estimated = force_value;    // 估计足端力
             
+            // 获取传感器配置参数
+            const auto& sensor_config = config_manager_->getMessageConverterConfig().validation_ranges.sensor;
+
             // 判断是否接触地面（基于力阈值）
-            const float contact_threshold = 10.0f; // 接触力阈值（牛顿）
-            foot_info.in_contact = (force_value > contact_threshold);
+            foot_info.in_contact = (force_value > sensor_config.foot_contact_threshold);
             foot_info.contact_probability = foot_info.in_contact ? 1.0f : 0.0f;
-            
+
             // 数据范围验证
             if (options_.validate_ranges) {
-                foot_info.force = std::clamp(foot_info.force, -100.0f, 1000.0f);
-                foot_info.force_estimated = std::clamp(foot_info.force_estimated, -100.0f, 1000.0f);
+                foot_info.force = std::clamp(foot_info.force, sensor_config.foot_force_min, sensor_config.foot_force_max);
+                foot_info.force_estimated = std::clamp(foot_info.force_estimated, sensor_config.foot_force_min, sensor_config.foot_force_max);
             }
             
             unified_feet.push_back(foot_info);
@@ -518,6 +814,9 @@ ConversionResult Go2MessageConverter::convertIMUInfo(
         
         // 数据范围验证（如果启用了范围验证）
         if (options_.validate_ranges) {
+            // 获取传感器配置参数
+            const auto& sensor_config = config_manager_->getMessageConverterConfig().validation_ranges.sensor;
+
             // 验证四元数模长接近1.0
             float quat_norm = std::sqrt(
                 unified_imu.quaternion[0] * unified_imu.quaternion[0] +
@@ -525,32 +824,35 @@ ConversionResult Go2MessageConverter::convertIMUInfo(
                 unified_imu.quaternion[2] * unified_imu.quaternion[2] +
                 unified_imu.quaternion[3] * unified_imu.quaternion[3]
             );
-            
-            if (std::abs(quat_norm - 1.0f) > 0.1f) {
+
+            if (std::abs(quat_norm - 1.0f) > sensor_config.quaternion_tolerance) {
                 setError("四元数模长异常: " + std::to_string(quat_norm));
                 // 重置为单位四元数
                 unified_imu.quaternion = {1.0f, 0.0f, 0.0f, 0.0f};
             }
-            
-            // 验证陀螺仪数据范围 (通常±2000 deg/s = ±35 rad/s)
+
+            // 验证陀螺仪数据范围
             for (size_t i = 0; i < 3; ++i) {
-                if (std::abs(unified_imu.gyroscope[i]) > 35.0f) {
+                if (std::abs(unified_imu.gyroscope[i]) > sensor_config.imu_gyroscope_max) {
                     setError("陀螺仪数据超出范围: " + std::to_string(unified_imu.gyroscope[i]));
                     unified_imu.gyroscope[i] = 0.0f;
                 }
             }
-            
-            // 验证加速度计数据范围 (通常±16g = ±157 m/s^2)
+
+            // 验证加速度计数据范围
             for (size_t i = 0; i < 3; ++i) {
-                if (std::abs(unified_imu.accelerometer[i]) > 157.0f) {
+                if (std::abs(unified_imu.accelerometer[i]) > sensor_config.imu_accelerometer_max) {
                     setError("加速度计数据超出范围: " + std::to_string(unified_imu.accelerometer[i]));
                     unified_imu.accelerometer[i] = 0.0f;
                 }
             }
-            
+
             // 验证IMU温度范围
-            if (!validateRange(static_cast<float>(unified_imu.temperature), -40.0f, 85.0f, "imu_temperature")) {
-                unified_imu.temperature = 25; // 设置默认温度
+            if (!validateRange(static_cast<float>(unified_imu.temperature),
+                             sensor_config.imu_temperature_min,
+                             sensor_config.imu_temperature_max,
+                             "imu_temperature")) {
+                unified_imu.temperature = sensor_config.imu_default_temperature; // 设置默认温度
             }
         }
         
@@ -577,8 +879,12 @@ ConversionResult Go2MessageConverter::convertBmsState(
     auto start_time = std::chrono::high_resolution_clock::now();
     
     try {
+        // 获取电池配置参数
+        const auto& battery_config = config_manager_->getMessageConverterConfig().validation_ranges.battery;
+        const auto& health_config = config_manager_->getMessageConverterConfig().validation_ranges.battery_health;
+
         // 电流转换：Go2 current字段是int32_t，需要转换为实际安培值
-        unified_battery.current = static_cast<double>(go2_bms.current) / 1000.0; // 毫安转安培
+        unified_battery.current = static_cast<double>(go2_bms.current) / 1000.0f; // 毫安转安培
 
         // 电量百分比转换
         unified_battery.soc_percentage = static_cast<double>(go2_bms.soc);
@@ -587,13 +893,13 @@ ConversionResult Go2MessageConverter::convertBmsState(
         unified_battery.cells.clear();
         if (!go2_bms.cell_vol.empty()) {
             float total_voltage = 0.0f;
-            for (size_t i = 0; i < go2_bms.cell_vol.size() && i < 15; ++i) {
+            for (size_t i = 0; i < go2_bms.cell_vol.size() && i < battery_config.cell_count; ++i) {
                 robot_base_interfaces::power_interface::BatteryCellInfo cell;
                 cell.cell_id = static_cast<uint8_t>(i);
-                cell.voltage = static_cast<double>(go2_bms.cell_vol[i]) / 1000.0; // mV转V
-                cell.temperature = 25.0; // 单个电芯温度，Go2没有单独的电芯温度
-                cell.capacity_mah = 15000.0 / 15.0; // 平均分配容量
-                cell.health_percentage = 100.0f; // 默认健康度
+                cell.voltage = static_cast<double>(go2_bms.cell_vol[i]) / 1000.0f; // mV转V
+                cell.temperature = battery_config.default_cell_temperature; // 单个电芯温度，Go2没有单独的电芯温度
+                cell.capacity_mah = static_cast<double>(battery_config.capacity_mah) / battery_config.cell_count; // 平均分配容量
+                cell.health_percentage = health_config.default_health_percentage; // 默认健康度
                 cell.cycle_count = go2_bms.cycle;
                 unified_battery.cells.push_back(cell);
                 total_voltage += cell.voltage;
@@ -602,7 +908,7 @@ ConversionResult Go2MessageConverter::convertBmsState(
             unified_battery.voltage = static_cast<double>(total_voltage);
         } else {
             // 如果没有电芯电压数据，设置默认值
-            unified_battery.voltage = 25.2; // Go2典型电压 (15节电池 * 1.68V/节)
+            unified_battery.voltage = battery_config.nominal_voltage; // Go2典型电压
         }
 
         // 温度信息：使用BQ NTC温度传感器数组的第一个值
@@ -625,30 +931,38 @@ ConversionResult Go2MessageConverter::convertBmsState(
                 unified_battery.mcu_ntc_temps.push_back(static_cast<float>(temp));
             }
         } else {
-            unified_battery.temperature = 25.0; // 默认温度
-            unified_battery.min_temperature = 25.0;
-            unified_battery.max_temperature = 25.0;
+            unified_battery.temperature = battery_config.default_cell_temperature; // 默认温度
+            unified_battery.min_temperature = battery_config.default_cell_temperature;
+            unified_battery.max_temperature = battery_config.default_cell_temperature;
         }
-        
+
         // 根据BMS数据推断电池健康状态（不使用status字段，因为status是工作状态不是健康状态）
         unified_battery.health = inferBatteryHealthFromBms(go2_bms);
         unified_battery.status = static_cast<uint8_t>(go2_bms.status & 0xFF);
-        
+
         // 设置电池循环次数信息
         unified_battery.cycle_count = go2_bms.cycle; // 如果BatteryInfo有此字段
-        
+
         // Go2 BmsState中没有容量字段，设置典型值
-        unified_battery.capacity_mah = 15000; // Go2典型电池容量15Ah
+        unified_battery.capacity_mah = battery_config.capacity_mah; // Go2典型电池容量
         // 根据SOC计算剩余容量
-        unified_battery.remaining_mah = 
+        unified_battery.remaining_mah =
             static_cast<double>(unified_battery.capacity_mah * go2_bms.soc / 100.0);
-        
+
         // 数据范围验证
         if (options_.validate_ranges) {
-            unified_battery.voltage = std::clamp(static_cast<double>(unified_battery.voltage), 0.0, 100.0);
-            unified_battery.current = std::clamp(static_cast<double>(unified_battery.current), -50.0, 50.0);
-            unified_battery.soc_percentage = std::clamp(static_cast<double>(unified_battery.soc_percentage), 0.0, 100.0);
-            unified_battery.temperature = std::clamp(static_cast<double>(unified_battery.temperature), -20.0, 80.0);
+            unified_battery.voltage = std::clamp(static_cast<double>(unified_battery.voltage),
+                                                static_cast<double>(battery_config.voltage_min),
+                                                static_cast<double>(battery_config.voltage_max));
+            unified_battery.current = std::clamp(static_cast<double>(unified_battery.current),
+                                                -static_cast<double>(battery_config.current_max),
+                                                static_cast<double>(battery_config.current_max));
+            unified_battery.soc_percentage = std::clamp(static_cast<double>(unified_battery.soc_percentage),
+                                                       static_cast<double>(battery_config.capacity_min),
+                                                       static_cast<double>(battery_config.capacity_max));
+            unified_battery.temperature = std::clamp(static_cast<double>(unified_battery.temperature),
+                                                    static_cast<double>(battery_config.temperature_min),
+                                                    static_cast<double>(battery_config.temperature_max));
         }
         
         auto end_time = std::chrono::high_resolution_clock::now();
@@ -682,11 +996,14 @@ ConversionResult Go2MessageConverter::convertWirelessController(
         unified_controller.ry = go2_controller.ry;
         unified_controller.keys = go2_controller.keys;
 
+        // 获取控制器配置参数
+        const auto& controller_config = config_manager_->getMessageConverterConfig().validation_ranges.controller;
+
         // 判断遥控器连接状态 - 基于摇杆值和按键的活动状态
-        bool has_activity = (std::abs(go2_controller.lx) > 0.01f ||
-                           std::abs(go2_controller.ly) > 0.01f ||
-                           std::abs(go2_controller.rx) > 0.01f ||
-                           std::abs(go2_controller.ry) > 0.01f ||
+        bool has_activity = (std::abs(go2_controller.lx) > controller_config.activity_threshold ||
+                           std::abs(go2_controller.ly) > controller_config.activity_threshold ||
+                           std::abs(go2_controller.rx) > controller_config.activity_threshold ||
+                           std::abs(go2_controller.ry) > controller_config.activity_threshold ||
                            go2_controller.keys != 0);
 
         unified_controller.is_connected = has_activity;
@@ -695,17 +1012,18 @@ ConversionResult Go2MessageConverter::convertWirelessController(
 
         // 数据范围验证
         if (options_.validate_ranges) {
-            // 摇杆值应该在[-1.0, 1.0]范围内
-            if (std::abs(unified_controller.lx) > 1.0f ||
-                std::abs(unified_controller.ly) > 1.0f ||
-                std::abs(unified_controller.rx) > 1.0f ||
-                std::abs(unified_controller.ry) > 1.0f) {
-                setError("遥控器摇杆值超出范围[-1.0, 1.0]");
+            // 摇杆值应该在配置的范围内
+            if (std::abs(unified_controller.lx) > controller_config.stick_range ||
+                std::abs(unified_controller.ly) > controller_config.stick_range ||
+                std::abs(unified_controller.rx) > controller_config.stick_range ||
+                std::abs(unified_controller.ry) > controller_config.stick_range) {
+                setError("遥控器摇杆值超出范围[-" + std::to_string(controller_config.stick_range) +
+                        ", " + std::to_string(controller_config.stick_range) + "]");
                 // 限制范围但不中断转换
-                unified_controller.lx = std::clamp(unified_controller.lx, -1.0f, 1.0f);
-                unified_controller.ly = std::clamp(unified_controller.ly, -1.0f, 1.0f);
-                unified_controller.rx = std::clamp(unified_controller.rx, -1.0f, 1.0f);
-                unified_controller.ry = std::clamp(unified_controller.ry, -1.0f, 1.0f);
+                unified_controller.lx = std::clamp(unified_controller.lx, -controller_config.stick_range, controller_config.stick_range);
+                unified_controller.ly = std::clamp(unified_controller.ly, -controller_config.stick_range, controller_config.stick_range);
+                unified_controller.rx = std::clamp(unified_controller.rx, -controller_config.stick_range, controller_config.stick_range);
+                unified_controller.ry = std::clamp(unified_controller.ry, -controller_config.stick_range, controller_config.stick_range);
             }
         }
 
@@ -741,12 +1059,16 @@ ConversionResult Go2MessageConverter::convertControllerToTwist(
             twist.angular.y = 0.0;
             twist.angular.z = 0.0;
         } else {
+            // 获取速度和控制器配置参数
+            const auto& velocity_config = config_manager_->getMessageConverterConfig().validation_ranges.velocity;
+            const auto& controller_config = config_manager_->getMessageConverterConfig().validation_ranges.controller;
+
             // 左摇杆控制线性运动：ly->前后，lx->左右
-            const float max_linear_vel = 1.5f;  // Go2最大线速度
-            const float max_angular_vel = 2.0f; // Go2最大角速度
+            const float max_linear_vel = velocity_config.linear_x_max;  // Go2最大线速度
+            const float max_angular_vel = velocity_config.angular_z_max; // Go2最大角速度
 
             // 应用死区处理
-            const float deadzone = 0.05f;
+            const float deadzone = controller_config.deadzone;
             auto apply_deadzone = [deadzone](float value) -> float {
                 if (std::abs(value) < deadzone) return 0.0f;
                 float sign = value > 0 ? 1.0f : -1.0f;
@@ -791,6 +1113,9 @@ ConversionResult Go2MessageConverter::convertToOdometry(
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
+    // 获取里程计配置参数
+    const auto& odometry_config = config_manager_->getMessageConverterConfig().validation_ranges.odometry;
+
     try {
         // 设置消息头
         odometry.header.stamp.sec = static_cast<uint32_t>(go2_state.stamp.sec);
@@ -824,12 +1149,12 @@ ConversionResult Go2MessageConverter::convertToOdometry(
         std::fill(odometry.twist.covariance.begin(), odometry.twist.covariance.end(), 0.0);
 
         // 设置对角线元素为默认不确定性
-        odometry.pose.covariance[0] = odometry.pose.covariance[7] = 0.1;   // x,y位置不确定性
-        odometry.pose.covariance[14] = 0.1;  // z位置不确定性
-        odometry.pose.covariance[21] = odometry.pose.covariance[28] = odometry.pose.covariance[35] = 0.1; // 角度不确定性
+        odometry.pose.covariance[0] = odometry.pose.covariance[7] = odometry_config.position_covariance;   // x,y位置不确定性
+        odometry.pose.covariance[14] = odometry_config.position_covariance;  // z位置不确定性
+        odometry.pose.covariance[21] = odometry.pose.covariance[28] = odometry.pose.covariance[35] = odometry_config.orientation_covariance; // 角度不确定性
 
-        odometry.twist.covariance[0] = odometry.twist.covariance[7] = 0.1; // 线速度不确定性
-        odometry.twist.covariance[35] = 0.1; // 角速度不确定性
+        odometry.twist.covariance[0] = odometry.twist.covariance[7] = odometry_config.velocity_covariance; // 线速度不确定性
+        odometry.twist.covariance[35] = odometry_config.velocity_covariance; // 角速度不确定性
 
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
@@ -905,15 +1230,19 @@ ConversionResult Go2MessageConverter::convertBatteryToRos(
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
+    // 获取电池配置参数
+    const auto& battery_config = config_manager_->getMessageConverterConfig().validation_ranges.battery;
+    const auto& health_config = config_manager_->getMessageConverterConfig().validation_ranges.battery_health;
+
     try {
         // 清空输出容器
         battery_msg.clear();
 
         // 基本电池信息
         battery_msg["voltage"] = 0.0f; // Go2 BmsState中没有总电压，需要从LowState获取
-        battery_msg["current"] = static_cast<float>(go2_bms.current / 1000.0); // 毫安转安培
+        battery_msg["current"] = static_cast<float>(go2_bms.current) / 1000.0f; // 毫安转安培
         battery_msg["percentage"] = static_cast<float>(go2_bms.soc);
-        battery_msg["capacity"] = 15000.0f; // Go2标准容量
+        battery_msg["capacity"] = static_cast<float>(battery_config.capacity_mah); // Go2标准容量
         battery_msg["remaining_capacity"] = battery_msg["capacity"] * battery_msg["percentage"] / 100.0f;
 
         // 温度信息
@@ -927,7 +1256,7 @@ ConversionResult Go2MessageConverter::convertBatteryToRos(
 
         // 循环和健康信息
         battery_msg["cycle_count"] = static_cast<float>(go2_bms.cycle);
-        battery_msg["health_percentage"] = 100.0f; // 需要根据循环次数和其他因素计算
+        battery_msg["health_percentage"] = health_config.default_health_percentage; // 需要根据循环次数和其他因素计算
 
         // 状态信息
         battery_msg["status"] = static_cast<float>(go2_bms.status);
@@ -937,9 +1266,9 @@ ConversionResult Go2MessageConverter::convertBatteryToRos(
         if (go2_bms.cell_vol.size() > 0) {
             auto cell_min = *std::min_element(go2_bms.cell_vol.begin(), go2_bms.cell_vol.end());
             auto cell_max = *std::max_element(go2_bms.cell_vol.begin(), go2_bms.cell_vol.end());
-            battery_msg["cell_voltage_min"] = static_cast<float>(cell_min) / 1000.0f; // mV转V
-            battery_msg["cell_voltage_max"] = static_cast<float>(cell_max) / 1000.0f;
-            battery_msg["cell_voltage_diff"] = static_cast<float>(cell_max - cell_min) / 1000.0f;
+            battery_msg["cell_voltage_min"] = static_cast<float>(cell_min) / static_cast<float>(1000.0f); // mV转V
+            battery_msg["cell_voltage_max"] = static_cast<float>(cell_max) / static_cast<float>(1000.0f);
+            battery_msg["cell_voltage_diff"] = static_cast<float>(cell_max - cell_min) / static_cast<float>(1000.0f);
         }
 
         auto end_time = std::chrono::high_resolution_clock::now();
@@ -1037,10 +1366,13 @@ ConversionResult Go2MessageConverter::convertBatteryInfoToBms(
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
+    // 获取电池配置参数
+    const auto& battery_config = config_manager_->getMessageConverterConfig().validation_ranges.battery;
+
     try {
         // 基本字段转换
         go2_bms.soc = static_cast<uint8_t>(unified_battery.soc_percentage);
-        go2_bms.current = static_cast<int32_t>(unified_battery.current * 1000.0); // 安培转毫安
+        go2_bms.current = static_cast<int32_t>(unified_battery.current * 1000.0f); // 安培转毫安
         go2_bms.cycle = static_cast<uint16_t>(unified_battery.cycle_count);
 
         // 状态转换
@@ -1066,12 +1398,12 @@ ConversionResult Go2MessageConverter::convertBatteryInfoToBms(
         }
 
         // 电芯电压转换 - std::array 是固定大小，不需要 resize
-        for (size_t i = 0; i < 15; ++i) {
+        for (size_t i = 0; i < battery_config.cell_count; ++i) {
             if (i < unified_battery.cells.size()) {
                 go2_bms.cell_vol[i] = static_cast<uint16_t>(unified_battery.cells[i].voltage * 1000.0f); // V转mV
             } else {
-                // 默认单体电压 = 总电压/15
-                go2_bms.cell_vol[i] = static_cast<uint16_t>(unified_battery.voltage * 1000.0f / 15.0f);
+                // 默认单体电压 = 总电压/电芯数量
+                go2_bms.cell_vol[i] = static_cast<uint16_t>(unified_battery.voltage * 1000.0f / battery_config.cell_count);
             }
         }
 
@@ -1168,10 +1500,13 @@ ConversionResult Go2MessageConverter::convertVelocityCommand(
         
         // 数据范围验证和限制
         if (options_.validate_ranges) {
-            // Go2的速度限制：线速度±1.5m/s，角速度±2.0rad/s
-            if (std::abs(velocity.linear_x) > 1.5f || 
-                std::abs(velocity.linear_y) > 1.5f || 
-                std::abs(velocity.angular_z) > 2.0f) {
+            // 获取速度配置参数
+            const auto& velocity_config = config_manager_->getMessageConverterConfig().validation_ranges.velocity;
+
+            // Go2的速度限制检查
+            if (std::abs(velocity.linear_x) > velocity_config.linear_x_max ||
+                std::abs(velocity.linear_y) > velocity_config.linear_y_max ||
+                std::abs(velocity.angular_z) > velocity_config.angular_z_max) {
                 setError("速度命令超出Go2的安全范围");
                 return ConversionResult::INVALID_INPUT;
             }
@@ -1218,13 +1553,17 @@ ConversionResult Go2MessageConverter::convertPostureCommand(
         
         // 姿态参数范围验证
         if (options_.validate_ranges) {
+            // 获取姿态配置参数
+            const auto& posture_config = config_manager_->getMessageConverterConfig().validation_ranges.posture;
+
             // Go2的姿态限制检查
-            if (posture.body_height < 0.05f || posture.body_height > 0.4f) {
-                setError("身体高度超出Go2范围 (0.05-0.4m)");
+            if (posture.body_height < posture_config.body_height_min || posture.body_height > posture_config.body_height_max) {
+                setError("身体高度超出Go2范围 (" + std::to_string(posture_config.body_height_min) +
+                        "-" + std::to_string(posture_config.body_height_max) + "m)");
                 return ConversionResult::INVALID_INPUT;
             }
-            if (std::abs(posture.roll) > 0.5f || std::abs(posture.pitch) > 0.5f) {
-                setError("Roll/Pitch角度超出Go2安全范围 (±0.5rad)");
+            if (std::abs(posture.roll) > posture_config.roll_max || std::abs(posture.pitch) > posture_config.pitch_max) {
+                setError("Roll/Pitch角度超出Go2安全范围 (±" + std::to_string(posture_config.roll_max) + "rad)");
                 return ConversionResult::INVALID_INPUT;
             }
         }
@@ -1262,14 +1601,17 @@ ConversionResult Go2MessageConverter::convertTwistToGo2Velocity(
 
         // 数据范围验证和限制
         if (options_.validate_ranges) {
-            // 根据Go2文档，线速度限制±1.5m/s，角速度限制±2.0rad/s
-            vx = std::clamp(vx, -1.5f, 1.5f);
-            vy = std::clamp(vy, -1.0f, 1.0f);  // Y方向通常限制更严格
-            vyaw = std::clamp(vyaw, -2.0f, 2.0f);
+            // 获取速度配置参数
+            const auto& velocity_config = config_manager_->getMessageConverterConfig().validation_ranges.velocity;
 
-            if (std::abs(twist.linear.x) > 1.5f ||
-                std::abs(twist.linear.y) > 1.0f ||
-                std::abs(twist.angular.z) > 2.0f) {
+            // 根据配置限制速度
+            vx = std::clamp(vx, -velocity_config.linear_x_max, velocity_config.linear_x_max);
+            vy = std::clamp(vy, -velocity_config.linear_y_max, velocity_config.linear_y_max);
+            vyaw = std::clamp(vyaw, -velocity_config.angular_z_max, velocity_config.angular_z_max);
+
+            if (std::abs(twist.linear.x) > velocity_config.linear_x_max ||
+                std::abs(twist.linear.y) > velocity_config.linear_y_max ||
+                std::abs(twist.angular.z) > velocity_config.angular_z_max) {
                 setError("Twist速度超出Go2安全范围");
             }
         }
@@ -1310,14 +1652,17 @@ ConversionResult Go2MessageConverter::convertTwistToApiRequest(
 
         // 数据范围验证和限制
         if (options_.validate_ranges) {
-            // 根据Go2文档，线速度限制±1.5m/s，角速度限制±2.0rad/s
-            vx = std::clamp(vx, -1.5f, 1.5f);
-            vy = std::clamp(vy, -1.0f, 1.0f);  // Y方向通常限制更严格
-            vyaw = std::clamp(vyaw, -2.0f, 2.0f);
+            // 获取速度配置参数
+            const auto& velocity_config = config_manager_->getMessageConverterConfig().validation_ranges.velocity;
 
-            if (std::abs(twist.linear.x) > 1.5f ||
-                std::abs(twist.linear.y) > 1.0f ||
-                std::abs(twist.angular.z) > 2.0f) {
+            // 根据配置限制速度
+            vx = std::clamp(vx, -velocity_config.linear_x_max, velocity_config.linear_x_max);
+            vy = std::clamp(vy, -velocity_config.linear_y_max, velocity_config.linear_y_max);
+            vyaw = std::clamp(vyaw, -velocity_config.angular_z_max, velocity_config.angular_z_max);
+
+            if (std::abs(twist.linear.x) > velocity_config.linear_x_max ||
+                std::abs(twist.linear.y) > velocity_config.linear_y_max ||
+                std::abs(twist.angular.z) > velocity_config.angular_z_max) {
                 setError("Twist速度超出Go2安全范围，已被限制");
             }
         }
@@ -1452,6 +1797,9 @@ ConversionResult Go2MessageConverter::convertRosImuToUnified(
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
+    // 获取传感器配置参数
+    const auto& sensor_config = config_manager_->getMessageConverterConfig().validation_ranges.sensor;
+
     try {
         // 设置frame_id
         unified_imu.frame_id = ros_imu.header.frame_id.empty() ? "imu_link" : ros_imu.header.frame_id;
@@ -1491,7 +1839,7 @@ ConversionResult Go2MessageConverter::convertRosImuToUnified(
         }
 
         // 设置默认温度（ROS IMU消息通常不包含温度信息）
-        unified_imu.temperature = 25; // 默认室温
+        unified_imu.temperature = sensor_config.imu_default_temperature; // 默认室温
 
         // 数据验证
         if (options_.validate_ranges) {
@@ -1503,7 +1851,7 @@ ConversionResult Go2MessageConverter::convertRosImuToUnified(
                 unified_imu.orientation.z * unified_imu.orientation.z
             );
 
-            if (std::abs(quat_norm - 1.0f) > 0.1f) {
+            if (std::abs(quat_norm - 1.0f) > sensor_config.quaternion_tolerance) {
                 setError("ROS IMU四元数未归一化: " + std::to_string(quat_norm));
                 if (quat_norm > 0.001f) {  // 避免除零
                     unified_imu.orientation.w /= quat_norm;
@@ -1516,15 +1864,15 @@ ConversionResult Go2MessageConverter::convertRosImuToUnified(
                 }
             }
 
-            // 验证角速度范围（通常±35 rad/s）
-            validateRange(unified_imu.angular_velocity.x, -35.0f, 35.0f, "angular_velocity_x");
-            validateRange(unified_imu.angular_velocity.y, -35.0f, 35.0f, "angular_velocity_y");
-            validateRange(unified_imu.angular_velocity.z, -35.0f, 35.0f, "angular_velocity_z");
+            // 验证角速度范围
+            validateRange(unified_imu.angular_velocity.x, -sensor_config.imu_gyroscope_max, sensor_config.imu_gyroscope_max, "angular_velocity_x");
+            validateRange(unified_imu.angular_velocity.y, -sensor_config.imu_gyroscope_max, sensor_config.imu_gyroscope_max, "angular_velocity_y");
+            validateRange(unified_imu.angular_velocity.z, -sensor_config.imu_gyroscope_max, sensor_config.imu_gyroscope_max, "angular_velocity_z");
 
-            // 验证线性加速度范围（通常±157 m/s²）
-            validateRange(unified_imu.linear_acceleration.x, -157.0f, 157.0f, "linear_acceleration_x");
-            validateRange(unified_imu.linear_acceleration.y, -157.0f, 157.0f, "linear_acceleration_y");
-            validateRange(unified_imu.linear_acceleration.z, -157.0f, 157.0f, "linear_acceleration_z");
+            // 验证线性加速度范围
+            validateRange(unified_imu.linear_acceleration.x, -sensor_config.imu_accelerometer_max, sensor_config.imu_accelerometer_max, "linear_acceleration_x");
+            validateRange(unified_imu.linear_acceleration.y, -sensor_config.imu_accelerometer_max, sensor_config.imu_accelerometer_max, "linear_acceleration_y");
+            validateRange(unified_imu.linear_acceleration.z, -sensor_config.imu_accelerometer_max, sensor_config.imu_accelerometer_max, "linear_acceleration_z");
         }
 
         auto end_time = std::chrono::high_resolution_clock::now();
@@ -1544,7 +1892,7 @@ ConversionResult Go2MessageConverter::convertRosImuToUnified(
 
 ConversionResult Go2MessageConverter::enhancePointCloudData(
     const sensor_msgs::msg::PointCloud2& pointcloud,
-    robot_base_interfaces::sensor_interface::PointCloudData& /* enhanced_info */) const {
+    robot_base_interfaces::sensor_interface::PointCloudData& enhanced_info) const {
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -1581,8 +1929,46 @@ ConversionResult Go2MessageConverter::enhancePointCloudData(
              << ", 质量分数: " << quality_score
              << ", 字段数: " << pointcloud.fields.size();
 
-        // 由于不确定PointCloudData的具体结构，我们仅进行验证和记录
-        // 实际的字段赋值需要根据具体的结构体定义来实现
+        // 实际转换点云数据到统一格式
+        enhanced_info.frame_id = pointcloud.header.frame_id;
+        enhanced_info.timestamp_ns = pointcloud.header.stamp.sec * 1000000000ULL + pointcloud.header.stamp.nanosec;
+        enhanced_info.width = pointcloud.width;
+        enhanced_info.height = pointcloud.height;
+        enhanced_info.is_dense = pointcloud.is_dense;
+
+        // 清空并预分配点云数据空间
+        enhanced_info.points.clear();
+        enhanced_info.points.reserve(total_points);
+
+        // 解析点云数据字段
+        sensor_msgs::PointCloud2ConstIterator<float> iter_x(pointcloud, "x");
+        sensor_msgs::PointCloud2ConstIterator<float> iter_y(pointcloud, "y");
+        sensor_msgs::PointCloud2ConstIterator<float> iter_z(pointcloud, "z");
+
+        // 检查是否有强度字段
+        bool has_intensity = false;
+        sensor_msgs::PointCloud2ConstIterator<float> iter_intensity(pointcloud, "intensity");
+        for (const auto& field : pointcloud.fields) {
+            if (field.name == "intensity") {
+                has_intensity = true;
+                break;
+            }
+        }
+
+        // 转换每个点
+        for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z) {
+            robot_base_interfaces::sensor_interface::Point3D point;
+            point.x = *iter_x;
+            point.y = *iter_y;
+            point.z = *iter_z;
+
+            if (has_intensity && iter_intensity != iter_intensity.end()) {
+                point.intensity = *iter_intensity;
+                ++iter_intensity;
+            }
+
+            enhanced_info.points.push_back(point);
+        }
 
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);

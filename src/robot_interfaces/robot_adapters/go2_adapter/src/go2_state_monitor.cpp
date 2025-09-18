@@ -21,7 +21,10 @@
 #include "robot_adapters/go2_adapter/go2_state_monitor.hpp" // 引入对应的头文件
 
 #include <rclcpp/rclcpp.hpp>    // ROS2 C++核心库
-#include <algorithm>            // C++标准算法库 
+#include <algorithm>            // C++标准算法库
+#include <chrono>               // 时间相关功能
+#include <fstream>              // 文件流操作
+#include <iomanip>              // 格式化输出 
 
 namespace robot_adapters {
 namespace go2_adapter {
@@ -54,7 +57,9 @@ Go2StateMonitor::Go2StateMonitor(const std::string& node_name)
       fair_threshold_(DEFAULT_FAIR_THRESHOLD),
       poor_threshold_(DEFAULT_POOR_THRESHOLD),
       start_time_(std::chrono::steady_clock::now()),
-      next_alert_id_(1)
+      next_alert_id_(1),
+      is_recording_(false),
+      recording_duration_(0)
 {
     RCLCPP_INFO(this->get_logger(), "Go2 State Monitor node is initializing...");
 
@@ -78,7 +83,7 @@ Go2StateMonitor::Go2StateMonitor(const std::string& node_name)
     // 初始化Go2专用组件
     try {
         message_converter_ = std::make_shared<Go2MessageConverter>();
-        go2_communication_ = std::make_shared<Go2Communication>(shared_from_this());
+        // Go2通信管理器将在initialize()方法中创建，因为需要shared_from_this()
         RCLCPP_INFO(this->get_logger(), "Go2 specialized components initialized successfully.");
     } catch (const std::exception& e) {
         RCLCPP_ERROR(this->get_logger(), "Failed to initialize Go2 components: %s", e.what());
@@ -103,6 +108,16 @@ bool Go2StateMonitor::initialize() {
 
     RCLCPP_INFO(this->get_logger(), "Initializing Go2 state monitor...");
     try {
+        // 创建Go2通信管理器
+        // 使用rclcpp::Node的shared_from_this()获取节点shared_ptr
+        auto node_ptr = rclcpp::Node::shared_from_this();
+        go2_communication_ = std::make_shared<Go2Communication>(node_ptr);
+        
+        // 初始化Go2通信管理器
+        if (!go2_communication_->initialize()) {
+            throw std::runtime_error("Go2通信管理器初始化失败");
+        }
+
         // 初始化ROS2通信组件（订阅者）
         initializeROS2Communications();
 
@@ -136,9 +151,13 @@ bool Go2StateMonitor::shutdown() {
         stopMonitoring();
         stopDataRecording(); // 停止任何可能在进行的数据记录
 
+        // 停止Go2通信管理器
+        if (go2_communication_) {
+            go2_communication_->stopCommunication();
+            go2_communication_->shutdown();
+        }
+
         // 重置（销毁）所有ROS2实体
-        sport_state_sub_.reset();
-        low_state_sub_.reset();
         monitoring_timer_.reset();
 
         // 清理所有回调函数
@@ -429,19 +448,26 @@ std::map<robot_base_interfaces::state_interface::SystemModule, bool> Go2StateMon
  */
 void Go2StateMonitor::initializeROS2Communications() {
     RCLCPP_INFO(this->get_logger(), "Initializing ROS2 communication components...");
-    auto qos = rclcpp::QoS(10); // 使用深度为10的默认QoS配置
 
-    // 订阅Go2运动状态话题
-    sport_state_sub_ = this->create_subscription<unitree_go::msg::SportModeState>(
-        "/sportmodestate", qos,
+    if (!go2_communication_) {
+        RCLCPP_ERROR(this->get_logger(), "Go2 communication manager is not initialized");
+        return;
+    }
+
+    // 使用封装的通信管理器设置回调函数
+    go2_communication_->setSportModeStateCallback(
         std::bind(&Go2StateMonitor::sportModeStateCallback, this, std::placeholders::_1)
     );
 
-    // 订阅Go2底层状态话题
-    low_state_sub_ = this->create_subscription<unitree_go::msg::LowState>(
-        "/lowstate", qos,
+    go2_communication_->setLowStateCallback(
         std::bind(&Go2StateMonitor::lowStateCallback, this, std::placeholders::_1)
     );
+
+    // 启动Go2通信
+    if (!go2_communication_->startCommunication()) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to start Go2 communication");
+        return;
+    }
 
     RCLCPP_INFO(this->get_logger(), "ROS2 communication components initialized.");
 }
@@ -476,14 +502,27 @@ void Go2StateMonitor::sportModeStateCallback(const unitree_go::msg::SportModeSta
         }
     }
 
+    // 转换并更新机器人状态
     auto new_robot_state = convertGo2StateToRobotState(msg);
+    updateRobotState(new_robot_state);
+
+    // 更新错误码（根据Go2的mode判断是否有异常）
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        // 注意：error_code实际表示当前模式，不是错误代码
-        // current_error_code_ = msg->error_code;
+        // 根据Go2的mode判断是否有错误
+        if (msg->mode == 6 || msg->mode == 7) { // jointLock或damping模式通常表示异常
+            current_error_code_ = 2001; // 异常模式错误码
+        } else if (msg->mode < 0 || msg->mode > 13) {
+            current_error_code_ = 1001; // 未知模式错误
+        } else {
+            current_error_code_ = 0; // 正常状态
+        }
     }
-    updateRobotState(new_robot_state);
+
     updateFootPositionAndVelocity(msg);
+
+    // 基于运动状态评估健康等级
+    evaluateHealthFromSportState(msg);
 
     RCLCPP_DEBUG(this->get_logger(), "Received Go2 sport state update. Mode: %d, Current Mode Code: %d",
                 msg->mode, msg->error_code);
@@ -528,6 +567,9 @@ void Go2StateMonitor::lowStateCallback(const unitree_go::msg::LowState::SharedPt
 
         updateFootForceInfo(msg);
     }
+
+    // 基于底层状态评估健康等级
+    evaluateHealthFromLowState(msg);
 
     RCLCPP_DEBUG(this->get_logger(), "Received Go2 low state update.");
 }
@@ -724,18 +766,94 @@ bool Go2StateMonitor::setModuleMonitoring(
 // (以下为占位符实现)
 
 bool Go2StateMonitor::startDataRecording(uint32_t duration_seconds) {
-    RCLCPP_INFO(this->get_logger(), "Starting state data recording for %d seconds.", duration_seconds);
+    std::lock_guard<std::mutex> lock(recording_mutex_);
+
+    if (is_recording_) {
+        RCLCPP_WARN(this->get_logger(), "数据记录已经在进行中，无法启动新的记录。");
+        return false;
+    }
+
+    if (!is_monitoring_) {
+        RCLCPP_ERROR(this->get_logger(), "状态监控器未启动，无法开始数据记录。");
+        return false;
+    }
+
+    // 清空之前的记录数据
+    recorded_states_.clear();
+
+    // 设置记录参数
+    is_recording_ = true;
+    recording_duration_ = duration_seconds;
+    recording_start_time_ = std::chrono::steady_clock::now();
+
+    // 创建数据记录定时器
+    recording_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(static_cast<int>(1000.0f / RECORDING_FREQUENCY)),
+        std::bind(&Go2StateMonitor::recordingTimerCallback, this)
+    );
+
+    if (duration_seconds == 0) {
+        RCLCPP_INFO(this->get_logger(), "开始持续数据记录 (频率: %.1f Hz)", RECORDING_FREQUENCY);
+    } else {
+        RCLCPP_INFO(this->get_logger(), "开始数据记录，持续时间: %d 秒 (频率: %.1f Hz)",
+                   duration_seconds, RECORDING_FREQUENCY);
+    }
+
     return true;
 }
 
 bool Go2StateMonitor::stopDataRecording() {
-    RCLCPP_INFO(this->get_logger(), "Stopping state data recording.");
+    std::lock_guard<std::mutex> lock(recording_mutex_);
+
+    if (!is_recording_) {
+        RCLCPP_WARN(this->get_logger(), "数据记录未在进行中，无需停止。");
+        return false;
+    }
+
+    // 停止记录定时器
+    if (recording_timer_) {
+        recording_timer_->cancel();
+        recording_timer_.reset();
+    }
+
+    // 更新记录状态
+    is_recording_ = false;
+
+    // 计算记录时长
+    auto recording_end_time = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(
+        recording_end_time - recording_start_time_).count();
+
+    RCLCPP_INFO(this->get_logger(), "数据记录已停止。记录时长: %ld 秒，总计记录 %zu 条状态数据。",
+               duration, recorded_states_.size());
+
     return true;
 }
 
 bool Go2StateMonitor::exportStateData(const std::string& file_path, const std::string& format) {
-    RCLCPP_INFO(this->get_logger(), "Exporting state data to %s in %s format.", file_path.c_str(), format.c_str());
-    return true;
+    std::lock_guard<std::mutex> lock(recording_mutex_);
+
+    if (recorded_states_.empty()) {
+        RCLCPP_WARN(this->get_logger(), "没有可导出的状态数据。");
+        return false;
+    }
+
+    try {
+        if (format == "json") {
+            return exportToJSON(file_path);
+        } else if (format == "csv") {
+            return exportToCSV(file_path);
+        } else if (format == "binary") {
+            return exportToBinary(file_path);
+        } else {
+            RCLCPP_ERROR(this->get_logger(), "不支持的导出格式: %s。支持的格式: json, csv, binary",
+                        format.c_str());
+            return false;
+        }
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "导出数据时发生错误: %s", e.what());
+        return false;
+    }
 }
 
 std::vector<robot_base_interfaces::state_interface::SystemModule> Go2StateMonitor::getSupportedModules() const {
@@ -935,14 +1053,30 @@ robot_base_interfaces::state_interface::RobotState Go2StateMonitor::convertGo2St
     if (!sport_state) return robot_base_interfaces::state_interface::RobotState::UNKNOWN;
 
     switch (sport_state->mode) {
-        case 0: return robot_base_interfaces::state_interface::RobotState::STANDBY;
-        case 1: // 平衡站立
-        case 2: // 姿态控制
-            return robot_base_interfaces::state_interface::RobotState::ACTIVE; // 使用ACTIVE表示静态站立
-        case 3: // 移动模式
+        case 0:  // idle - 默认站立状态
+        case 1:  // balanceStand - 平衡站立
+            return robot_base_interfaces::state_interface::RobotState::STANDBY;
+        case 2:  // pose - 姿态控制
+            return robot_base_interfaces::state_interface::RobotState::ACTIVE;
+        case 3:  // locomotion - 运动模式
             return robot_base_interfaces::state_interface::RobotState::MOVING;
-        case 5: return robot_base_interfaces::state_interface::RobotState::EMERGENCY_STOP;
-        default: return robot_base_interfaces::state_interface::RobotState::UNKNOWN;
+        case 5:  // lieDown - 趴下
+            return robot_base_interfaces::state_interface::RobotState::STANDBY;
+        case 6:  // jointLock - 关节锁定
+        case 7:  // damping - 阻尼模式
+            return robot_base_interfaces::state_interface::RobotState::ERROR;
+        case 8:  // recoveryStand - 恢复站立
+            return robot_base_interfaces::state_interface::RobotState::ACTIVE;
+        case 10: // sit - 坐下
+            return robot_base_interfaces::state_interface::RobotState::STANDBY;
+        case 11: // frontFlip - 前空翻
+        case 12: // frontJump - 前跳
+        case 13: // frontPounce - 前扑
+            return robot_base_interfaces::state_interface::RobotState::ACTIVE;
+        case 4:  // reserve - 预留
+        case 9:  // reserve - 预留
+        default:
+            return robot_base_interfaces::state_interface::RobotState::UNKNOWN;
     }
 }
 
@@ -1018,6 +1152,314 @@ void Go2StateMonitor::updateFootPositionAndVelocity(const unitree_go::msg::Sport
             detailed_state_.feet[i].velocity.z = sport_state->foot_speed_body[idx + 2];
         }
     }
+}
+
+/**
+ * @brief 基于运动状态消息评估健康等级
+ */
+void Go2StateMonitor::evaluateHealthFromSportState(const unitree_go::msg::SportModeState::SharedPtr& msg) {
+    if (!msg) return;
+
+    std::vector<robot_base_interfaces::state_interface::AlertInfo> new_alerts;
+
+    // 检查是否处于异常模式
+    if (msg->mode == 6) { // jointLock - 关节锁定
+        robot_base_interfaces::state_interface::AlertInfo alert;
+        alert.code = 3001;
+        alert.type = robot_base_interfaces::state_interface::AlertType::CRITICAL;
+        alert.module = robot_base_interfaces::state_interface::SystemModule::MOTION_CONTROL;
+        alert.message = "机器人处于关节锁定状态";
+        alert.is_active = true;
+        alert.timestamp_ns = this->get_clock()->now().nanoseconds();
+        new_alerts.push_back(alert);
+    } else if (msg->mode == 7) { // damping - 阻尼模式
+        robot_base_interfaces::state_interface::AlertInfo alert;
+        alert.code = 3002;
+        alert.type = robot_base_interfaces::state_interface::AlertType::ERROR;
+        alert.module = robot_base_interfaces::state_interface::SystemModule::MOTION_CONTROL;
+        alert.message = "机器人处于阻尼模式";
+        alert.is_active = true;
+        alert.timestamp_ns = this->get_clock()->now().nanoseconds();
+        new_alerts.push_back(alert);
+    } else if (msg->mode < 0 || msg->mode > 13) { // 未知模式
+        robot_base_interfaces::state_interface::AlertInfo alert;
+        alert.code = 3003;
+        alert.type = robot_base_interfaces::state_interface::AlertType::ERROR;
+        alert.module = robot_base_interfaces::state_interface::SystemModule::MOTION_CONTROL;
+        alert.message = "机器人处于未知运动模式: " + std::to_string(msg->mode);
+        alert.is_active = true;
+        alert.timestamp_ns = this->get_clock()->now().nanoseconds();
+        new_alerts.push_back(alert);
+    }
+
+    // 检查足端位置是否异常（如果数据可用）
+    if (msg->foot_position_body.size() >= 12) {
+        bool foot_pos_abnormal = false;
+        for (size_t i = 0; i < 12; i += 3) {
+            float x = msg->foot_position_body[i];
+            float y = msg->foot_position_body[i + 1];
+            float z = msg->foot_position_body[i + 2];
+            // 检查足端位置是否超出合理范围（根据Go2机器人的物理尺寸）
+            if (std::abs(x) > 0.5f || std::abs(y) > 0.3f || std::abs(z) > 0.4f) {
+                foot_pos_abnormal = true;
+                break;
+            }
+        }
+        if (foot_pos_abnormal) {
+            robot_base_interfaces::state_interface::AlertInfo alert;
+            alert.code = 3004;
+            alert.type = robot_base_interfaces::state_interface::AlertType::WARNING;
+            alert.module = robot_base_interfaces::state_interface::SystemModule::MOTION_CONTROL;
+            alert.message = "足端位置异常";
+            alert.is_active = true;
+            alert.timestamp_ns = this->get_clock()->now().nanoseconds();
+            new_alerts.push_back(alert);
+        }
+    }
+
+    // 添加新的告警
+    for (const auto& alert : new_alerts) {
+        addAlert(alert);
+    }
+}
+
+/**
+ * @brief 基于底层状态消息评估健康等级
+ */
+void Go2StateMonitor::evaluateHealthFromLowState(const unitree_go::msg::LowState::SharedPtr& msg) {
+    if (!msg) return;
+
+    std::vector<robot_base_interfaces::state_interface::AlertInfo> new_alerts;
+
+    // 检查电池电压
+    float battery_voltage = msg->power_v;
+    if (battery_voltage < 20.0f) { // 低电量临界值
+        robot_base_interfaces::state_interface::AlertInfo alert;
+        alert.code = 4001;
+        alert.type = robot_base_interfaces::state_interface::AlertType::CRITICAL;
+        alert.module = robot_base_interfaces::state_interface::SystemModule::POWER_MANAGEMENT;
+        alert.message = "电量严重不足: " + std::to_string(battery_voltage) + "V";
+        alert.is_active = true;
+        alert.timestamp_ns = this->get_clock()->now().nanoseconds();
+        new_alerts.push_back(alert);
+    } else if (battery_voltage < 22.0f) { // 低电量警告值
+        robot_base_interfaces::state_interface::AlertInfo alert;
+        alert.code = 4002;
+        alert.type = robot_base_interfaces::state_interface::AlertType::WARNING;
+        alert.module = robot_base_interfaces::state_interface::SystemModule::POWER_MANAGEMENT;
+        alert.message = "电量较低: " + std::to_string(battery_voltage) + "V";
+        alert.is_active = true;
+        alert.timestamp_ns = this->get_clock()->now().nanoseconds();
+        new_alerts.push_back(alert);
+    }
+
+    // 检查电机温度
+    const float MAX_MOTOR_TEMP = 90.0f;   // 电机过热阈值
+    const float HIGH_MOTOR_TEMP = 80.0f;  // 电机温度偏高阈值
+
+    for (size_t i = 0; i < std::min(static_cast<size_t>(12), msg->motor_state.size()); ++i) {
+        float temp = msg->motor_state[i].temperature;
+        if (temp > MAX_MOTOR_TEMP) {
+            robot_base_interfaces::state_interface::AlertInfo alert;
+            alert.code = 4100 + i; // 4100-4111 代表各个电机过热
+            alert.type = robot_base_interfaces::state_interface::AlertType::CRITICAL;
+            alert.module = robot_base_interfaces::state_interface::SystemModule::MOTION_CONTROL;
+            alert.message = "电机" + std::to_string(i) + "过热: " + std::to_string(temp) + "°C";
+            alert.is_active = true;
+            alert.timestamp_ns = this->get_clock()->now().nanoseconds();
+            new_alerts.push_back(alert);
+        } else if (temp > HIGH_MOTOR_TEMP) {
+            robot_base_interfaces::state_interface::AlertInfo alert;
+            alert.code = 4200 + i; // 4200-4211 代表各个电机温度高
+            alert.type = robot_base_interfaces::state_interface::AlertType::WARNING;
+            alert.module = robot_base_interfaces::state_interface::SystemModule::MOTION_CONTROL;
+            alert.message = "电机" + std::to_string(i) + "温度偏高: " + std::to_string(temp) + "°C";
+            alert.is_active = true;
+            alert.timestamp_ns = this->get_clock()->now().nanoseconds();
+            new_alerts.push_back(alert);
+        }
+    }
+
+    // 检查电流是否过大
+    float current = msg->power_a;
+    if (current > 15.0f) { // 过大电流阈值（Go2最大电流约20A）
+        robot_base_interfaces::state_interface::AlertInfo alert;
+        alert.code = 4003;
+        alert.type = robot_base_interfaces::state_interface::AlertType::WARNING;
+        alert.module = robot_base_interfaces::state_interface::SystemModule::POWER_MANAGEMENT;
+        alert.message = "电流过大: " + std::to_string(current) + "A";
+        alert.is_active = true;
+        alert.timestamp_ns = this->get_clock()->now().nanoseconds();
+        new_alerts.push_back(alert);
+    }
+
+    // 添加新的告警
+    for (const auto& alert : new_alerts) {
+        addAlert(alert);
+    }
+}
+
+// ============= 数据记录私有助手函数实现 =============
+
+void Go2StateMonitor::recordingTimerCallback() {
+    // 检查是否应该停止记录
+    if (shouldStopRecording()) {
+        stopDataRecording();
+        return;
+    }
+
+    // 获取当前详细状态
+    auto current_detailed_state = getDetailedState();
+
+    // 确保基本状态字段是最新的
+    {
+        std::lock_guard<std::mutex> state_lock(state_mutex_);
+        current_detailed_state.state = current_state_;
+        current_detailed_state.health_level = current_health_level_;
+        current_detailed_state.health_score = current_health_score_;
+        current_detailed_state.error_code = current_error_code_;
+    }
+
+    // 更新时间戳为当前时间
+    current_detailed_state.timestamp_ns = this->get_clock()->now().nanoseconds();
+
+    // 记录状态数据
+    {
+        std::lock_guard<std::mutex> lock(recording_mutex_);
+        recorded_states_.push_back(current_detailed_state);
+    }
+}
+
+bool Go2StateMonitor::shouldStopRecording() const {
+    if (recording_duration_ == 0) {
+        return false; // 持续记录，不自动停止
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        now - recording_start_time_).count();
+
+    return elapsed >= recording_duration_;
+}
+
+bool Go2StateMonitor::exportToJSON(const std::string& file_path) const {
+    std::ofstream file(file_path);
+    if (!file.is_open()) {
+        RCLCPP_ERROR(this->get_logger(), "无法创建文件: %s", file_path.c_str());
+        return false;
+    }
+
+    file << "{\n";
+    file << "  \"metadata\": {\n";
+    file << "    \"export_time\": " << std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count() << ",\n";
+    file << "    \"robot_type\": \"Go2\",\n";
+    file << "    \"data_count\": " << recorded_states_.size() << ",\n";
+    file << "    \"recording_frequency\": " << RECORDING_FREQUENCY << "\n";
+    file << "  },\n";
+    file << "  \"data\": [\n";
+
+    for (size_t i = 0; i < recorded_states_.size(); ++i) {
+        const auto& state = recorded_states_[i];
+        file << "    {\n";
+        file << "      \"timestamp_ns\": " << state.timestamp_ns << ",\n";
+        file << "      \"robot_state\": " << static_cast<int>(state.state) << ",\n";
+        file << "      \"health_level\": " << static_cast<int>(state.health_level) << ",\n";
+        file << "      \"health_score\": " << state.health_score << ",\n";
+        file << "      \"position\": [" << state.motion.position.x << ", "
+             << state.motion.position.y << ", " << state.motion.position.z << "],\n";
+        file << "      \"velocity\": [" << state.motion.velocity.x << ", "
+             << state.motion.velocity.y << ", " << state.motion.velocity.z << "],\n";
+        file << "      \"system_voltage\": " << state.system_v << ",\n";
+        file << "      \"system_current\": " << state.system_a << ",\n";
+        file << "      \"motor_count\": " << state.motors.size() << ",\n";
+        file << "      \"foot_count\": " << state.feet.size() << "\n";
+        file << "    }";
+        if (i < recorded_states_.size() - 1) {
+            file << ",";
+        }
+        file << "\n";
+    }
+
+    file << "  ]\n";
+    file << "}\n";
+    file.close();
+
+    RCLCPP_INFO(this->get_logger(), "已成功导出 %zu 条状态数据到JSON文件: %s",
+               recorded_states_.size(), file_path.c_str());
+    return true;
+}
+
+bool Go2StateMonitor::exportToCSV(const std::string& file_path) const {
+    std::ofstream file(file_path);
+    if (!file.is_open()) {
+        RCLCPP_ERROR(this->get_logger(), "无法创建文件: %s", file_path.c_str());
+        return false;
+    }
+
+    // 写入CSV头部
+    file << "timestamp_ns,robot_state,health_level,health_score,pos_x,pos_y,pos_z,"
+         << "vel_x,vel_y,vel_z,system_v,system_a,motor_count,foot_count\n";
+
+    // 写入数据行
+    for (const auto& state : recorded_states_) {
+        file << state.timestamp_ns << ","
+             << static_cast<int>(state.state) << ","
+             << static_cast<int>(state.health_level) << ","
+             << std::fixed << std::setprecision(3) << state.health_score << ","
+             << state.motion.position.x << ","
+             << state.motion.position.y << ","
+             << state.motion.position.z << ","
+             << state.motion.velocity.x << ","
+             << state.motion.velocity.y << ","
+             << state.motion.velocity.z << ","
+             << state.system_v << ","
+             << state.system_a << ","
+             << state.motors.size() << ","
+             << state.feet.size() << "\n";
+    }
+
+    file.close();
+    RCLCPP_INFO(this->get_logger(), "已成功导出 %zu 条状态数据到CSV文件: %s",
+               recorded_states_.size(), file_path.c_str());
+    return true;
+}
+
+bool Go2StateMonitor::exportToBinary(const std::string& file_path) const {
+    std::ofstream file(file_path, std::ios::binary);
+    if (!file.is_open()) {
+        RCLCPP_ERROR(this->get_logger(), "无法创建文件: %s", file_path.c_str());
+        return false;
+    }
+
+    // 写入文件头信息
+    uint32_t magic_number = 0x47324442; // "G2DB" Go2 Data Binary
+    uint32_t version = 1;
+    uint32_t data_count = static_cast<uint32_t>(recorded_states_.size());
+    float frequency = RECORDING_FREQUENCY;
+
+    file.write(reinterpret_cast<const char*>(&magic_number), sizeof(magic_number));
+    file.write(reinterpret_cast<const char*>(&version), sizeof(version));
+    file.write(reinterpret_cast<const char*>(&data_count), sizeof(data_count));
+    file.write(reinterpret_cast<const char*>(&frequency), sizeof(frequency));
+
+    // 写入状态数据
+    for (const auto& state : recorded_states_) {
+        // 简化的二进制格式，只写入核心数据
+        file.write(reinterpret_cast<const char*>(&state.timestamp_ns), sizeof(state.timestamp_ns));
+        file.write(reinterpret_cast<const char*>(&state.state), sizeof(state.state));
+        file.write(reinterpret_cast<const char*>(&state.health_level), sizeof(state.health_level));
+        file.write(reinterpret_cast<const char*>(&state.health_score), sizeof(state.health_score));
+        file.write(reinterpret_cast<const char*>(&state.motion.position), sizeof(state.motion.position));
+        file.write(reinterpret_cast<const char*>(&state.motion.velocity), sizeof(state.motion.velocity));
+        file.write(reinterpret_cast<const char*>(&state.system_v), sizeof(state.system_v));
+        file.write(reinterpret_cast<const char*>(&state.system_a), sizeof(state.system_a));
+    }
+
+    file.close();
+    RCLCPP_INFO(this->get_logger(), "已成功导出 %zu 条状态数据到二进制文件: %s",
+               recorded_states_.size(), file_path.c_str());
+    return true;
 }
 
 } // namespace go2_adapter

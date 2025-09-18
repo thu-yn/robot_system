@@ -66,9 +66,8 @@ public:
     Go2MessageConverterTester()
         : total_tests_(0), passed_tests_(0), random_generator_(std::time(nullptr)) {
 
-        // 创建Go2MessageConverter实例
+        // 创建Go2MessageConverter实例（使用默认构造函数）
         converter_ = std::make_unique<Go2MessageConverter>();
-
         std::cout << "=== Go2MessageConverter功能验证测试程序 ===" << std::endl;
         std::cout << "初始化测试环境..." << std::endl;
     }

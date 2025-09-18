@@ -39,6 +39,9 @@ Go2Communication::Go2Communication(std::shared_ptr<rclcpp::Node> node)
       should_reconnect_(false),
       reconnect_attempts_(0) {
 
+    // 初始化配置管理器
+    config_manager_ = std::make_unique<Go2ConfigManager>();
+
     // 为不同类型的消息设置默认的缓冲区大小
     buffer_sizes_[MessageType::SPORT_MODE_STATE] = 10;
     buffer_sizes_[MessageType::LOW_STATE]        = 10;
@@ -51,7 +54,34 @@ Go2Communication::Go2Communication(std::shared_ptr<rclcpp::Node> node)
     stats_.connection_time   = std::chrono::steady_clock::now();
     stats_.last_message_time = std::chrono::steady_clock::now();
 
-    logInfo("Go2Communication object created.");
+    logInfo("Go2Communication object created with default configuration.");
+}
+
+Go2Communication::Go2Communication(std::shared_ptr<rclcpp::Node> node, const std::string& config_file_path)
+    : node_(node),
+      is_initialized_(false),
+      status_(CommunicationStatus::DISCONNECTED),
+      auto_reconnect_enabled_(true),
+      verbose_logging_(false),
+      should_reconnect_(false),
+      reconnect_attempts_(0) {
+
+    // 初始化配置管理器并加载指定的配置文件
+    config_manager_ = std::make_unique<Go2ConfigManager>(config_file_path);
+
+    // 为不同类型的消息设置默认的缓冲区大小
+    buffer_sizes_[MessageType::SPORT_MODE_STATE] = 10;
+    buffer_sizes_[MessageType::LOW_STATE]        = 10;
+    buffer_sizes_[MessageType::BMS_STATE]        = 10;
+    buffer_sizes_[MessageType::POINT_CLOUD]      = 5; // 点云数据量大，缓冲区不宜过大
+    buffer_sizes_[MessageType::IMU_DATA]         = 20;
+    buffer_sizes_[MessageType::ODOMETRY]         = 10;
+
+    // 初始化统计数据的时间戳
+    stats_.connection_time   = std::chrono::steady_clock::now();
+    stats_.last_message_time = std::chrono::steady_clock::now();
+
+    logInfo("Go2Communication object created with config file: " + config_file_path);
 }
 
 /**
@@ -226,8 +256,10 @@ bool Go2Communication::stopCommunication() {
  */
 bool Go2Communication::connectToRobot(const std::string& robot_ip, int timeout_seconds) {
     logInfo("Attempting to connect to Go2 robot at " + robot_ip);
-    network_config_.robot_ip = robot_ip;
-    network_config_.connection_timeout_ms = timeout_seconds * 1000;
+    // 注意: 当前实现不支持动态修改配置，如需修改请通过配置文件
+    (void) timeout_seconds;
+    // config_manager_->getCommunicationConfig().network.robot_ip = robot_ip;
+    // config_manager_->getCommunicationConfig().connection.timeout_ms = timeout_seconds * 1000;
     updateConnectionStatus(CommunicationStatus::CONNECTING);
     stats_.connection_attempts++;
 
@@ -278,8 +310,9 @@ bool Go2Communication::isCommunicating() const {
  */
 void Go2Communication::setAutoReconnect(bool enable, int retry_interval_ms, int max_retries) {
     auto_reconnect_enabled_.store(enable);
-    network_config_.reconnect_interval_ms = retry_interval_ms;
-    network_config_.max_reconnect_attempts = max_retries;
+    // 注意: 当前实现不支持动态修改配置，如需修改请通过配置文件
+    // config_manager_->getCommunicationConfig().connection.reconnect_interval_ms = retry_interval_ms;
+    // config_manager_->getCommunicationConfig().connection.max_reconnect_attempts = max_retries;
     logInfo("Auto-reconnect set to: " + std::string(enable ? "Enabled" : "Disabled") +
             ", Interval: " + std::to_string(retry_interval_ms) + "ms" +
             ", Max Retries: " + std::to_string(max_retries));
@@ -529,14 +562,16 @@ void Go2Communication::resetStatistics() {
 // ============= 网络配置实现 =============
 
 bool Go2Communication::setNetworkInterface(const std::string& interface_name) {
-    network_config_.network_interface = interface_name;
+    // 注意: 当前实现不支持动态修改配置，如需修改请通过配置文件
+    // config_manager_->getCommunicationConfig().network.network_interface = interface_name;
     logInfo("Network interface set to: " + interface_name);
     // 实际应用中，这里可能需要重新配置DDS传输
     return true;
 }
 
 bool Go2Communication::setDdsDomainId(int domain_id) {
-    network_config_.dds_domain_id = domain_id;
+    // 注意: 当前实现不支持动态修改配置，如需修改请通过配置文件
+    // config_manager_->getCommunicationConfig().dds.domain_id = domain_id;
     logInfo("DDS Domain ID set to: " + std::to_string(domain_id));
     // 实际应用中，这里需要重启ROS节点或重新创建上下文才能生效
     return true;
@@ -546,6 +581,9 @@ void Go2Communication::setQosSettings(rclcpp::ReliabilityPolicy reliability,
                                      rclcpp::DurabilityPolicy durability,
                                      size_t history_depth) {
     // 此函数仅记录QoS设置，实际应用在创建发布者/订阅者时
+    (void) reliability;
+    (void) durability;
+    (void) history_depth;
     logInfo("QoS settings updated. They will be applied to new publishers/subscribers.");
 }
 
@@ -592,12 +630,13 @@ std::map<std::string, bool> Go2Communication::performConnectionDiagnostics() {
  * @brief 获取JSON格式的网络配置信息
  */
 std::string Go2Communication::getNetworkDiagnostics() const {
+    const auto& comm_config = config_manager_->getCommunicationConfig();
     std::ostringstream ss;
     ss << "{"
-       << "  \"robot_ip\": \""          << network_config_.robot_ip          << "\",\n"
-       << "  \"local_ip\": \""          << network_config_.local_ip          << "\",\n"
-       << "  \"network_interface\": \"" << network_config_.network_interface << "\",\n"
-       << "  \"dds_domain_id\": "       << network_config_.dds_domain_id     << ",\n"
+       << "  \"robot_ip\": \""          << comm_config.network.robot_ip          << "\",\n"
+       << "  \"local_ip\": \""          << comm_config.network.local_ip          << "\",\n"
+       << "  \"network_interface\": \"" << comm_config.network.network_interface << "\",\n"
+       << "  \"dds_domain_id\": "       << comm_config.dds.domain_id     << ",\n"
        << "  \"connection_status\": "   << static_cast<int>(status_.load())  << "\n"
        << "}";
     return ss.str();
@@ -873,15 +912,15 @@ void Go2Communication::statisticsTimerCallback() {
 void Go2Communication::reconnectTimerCallback() {
     if (should_reconnect_.load() && !isConnected()) {
         logInfo("Attempting to reconnect to Go2 robot...");
-        if (connectToRobot(network_config_.robot_ip)) {
+        if (connectToRobot(config_manager_->getCommunicationConfig().network.robot_ip)) {
             should_reconnect_.store(false);
             reconnect_attempts_ = 0;
             logInfo("Reconnection successful.");
         } else {
             reconnect_attempts_++;
             logWarning("Reconnection failed. Attempt: " + std::to_string(reconnect_attempts_));
-            if (network_config_.max_reconnect_attempts > 0 &&
-                reconnect_attempts_ >= network_config_.max_reconnect_attempts) {
+            if (config_manager_->getCommunicationConfig().connection.max_reconnect_attempts > 0 &&
+                reconnect_attempts_ >= config_manager_->getCommunicationConfig().connection.max_reconnect_attempts) {
                 should_reconnect_.store(false);
                 recordError("Max reconnection attempts reached. Stopping reconnection.");
             }
@@ -902,7 +941,7 @@ void Go2Communication::reconnectThreadFunction() {
         std::unique_lock<std::mutex> lock(reconnect_mutex_);
         // 等待被唤醒，或超时
         reconnect_cv_.wait_for(lock,
-            std::chrono::milliseconds(network_config_.reconnect_interval_ms),
+            std::chrono::milliseconds(config_manager_->getCommunicationConfig().connection.reconnect_interval_ms),
             [this] { return should_reconnect_.load() || !auto_reconnect_enabled_.load(); });
 
         if (!auto_reconnect_enabled_.load()) break; // 如果禁用了自动重连，则退出线程
@@ -999,11 +1038,12 @@ void Go2Communication::updateConnectionStatus(CommunicationStatus new_status) {
  * @brief 配置网络参数（占位符）
  */
 bool Go2Communication::configureNetwork() {
+    const auto& comm_config = config_manager_->getCommunicationConfig();
     logInfo("Configuring network parameters...");
-    logInfo("Robot IP: " + network_config_.robot_ip);
-    logInfo("Local IP: " + network_config_.local_ip);
-    logInfo("Network Interface: " + network_config_.network_interface);
-    logInfo("DDS Domain ID: " + std::to_string(network_config_.dds_domain_id));
+    logInfo("Robot IP: " + comm_config.network.robot_ip);
+    logInfo("Local IP: " + comm_config.network.local_ip);
+    logInfo("Network Interface: " + comm_config.network.network_interface);
+    logInfo("DDS Domain ID: " + std::to_string(comm_config.dds.domain_id));
     // 在实际应用中，这里会设置环境变量，如 CYCLONEDDS_URI
     return true;
 }
@@ -1018,18 +1058,19 @@ bool Go2Communication::verifyNetworkConnection() {
         return false;
     }
     // 基于 ping 的连通性检测（Linux）
-    if (network_config_.robot_ip.empty()) {
+    const auto& robot_ip = config_manager_->getCommunicationConfig().network.robot_ip;
+    if (robot_ip.empty()) {
         recordError("Robot IP is empty. Cannot perform ping test.");
         return false;
     }
 
-    std::string ping_command = "ping -c 1 -W 1 " + network_config_.robot_ip + " > /dev/null 2>&1";
+    std::string ping_command = "ping -c 1 -W 1 " + robot_ip + " > /dev/null 2>&1";
     int ping_result = std::system(ping_command.c_str());
     if (ping_result == 0) {
         logDebug("Ping to robot succeeded.");
         return true;
     } else {
-        recordError("Ping to robot failed: " + network_config_.robot_ip);
+        recordError("Ping to robot failed: " + robot_ip);
         return false;
     }
 }

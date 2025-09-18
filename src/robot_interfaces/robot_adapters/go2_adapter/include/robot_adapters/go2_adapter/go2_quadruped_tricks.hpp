@@ -22,9 +22,6 @@ namespace go2_adapter {
  * 此类是Go2机器人特技功能的具体实现。它通过向特定的ROS话题发布命令来调用
  * Unitree Go2的底层API，从而执行如站立、坐下、跳舞、作揖等动作。
  *
- * 当前实现是一个初始版本，主要作为占位符，未来可以更深入地与Unitree SDK或更复杂的
- * 运动控制服务集成。
- *
  * 使用方法：
  * 1. 创建一个Go2QuadrupedTricks实例。
  * 2. 调用相应的成员函数（如 `balanceStand()`, `performDance()` 等）。

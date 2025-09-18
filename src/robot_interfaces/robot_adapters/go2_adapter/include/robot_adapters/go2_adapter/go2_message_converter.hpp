@@ -23,6 +23,9 @@
 #include <cstdint>
 #include <thread>
 
+// Go2配置管理器
+#include "robot_adapters/go2_adapter/go2_config_manager.hpp"
+
 // Go2 原生消息类型 - 从go_ros2包导入
 #include "unitree_go/msg/sport_mode_state.hpp"
 #include "unitree_go/msg/low_state.hpp"
@@ -88,15 +91,34 @@ struct ConversionOptions {
 class Go2MessageConverter {
 public:
     /**
-     * @brief 构造函数
+     * @brief 默认构造函数（使用默认配置）
      */
     Go2MessageConverter();
-    
+
     /**
-     * @brief 构造函数（带配置）
+     * @brief 构造函数（带配置选项）
      * @param options 转换选项
      */
     explicit Go2MessageConverter(const ConversionOptions& options);
+
+    /**
+     * @brief 构造函数（带配置文件）
+     * @param config_file_path 配置文件路径
+     */
+    explicit Go2MessageConverter(const std::string& config_file_path);
+
+    /**
+     * @brief 构造函数（带配置选项和配置文件）
+     * @param options 转换选项
+     * @param config_file_path 配置文件路径
+     */
+    Go2MessageConverter(const ConversionOptions& options, const std::string& config_file_path);
+
+    /**
+     * @brief 构造函数（带配置管理器）
+     * @param config_manager 配置管理器的智能指针
+     */
+    explicit Go2MessageConverter(std::shared_ptr<Go2ConfigManager> config_manager);
     
     /**
      * @brief 析构函数
@@ -121,6 +143,37 @@ public:
      * @brief 重置为默认配置
      */
     void resetToDefaults();
+
+    /**
+     * @brief 加载配置文件
+     * @param config_file_path 配置文件路径
+     * @return 加载成功返回true，否则返回false
+     */
+    bool loadConfigFile(const std::string& config_file_path);
+
+    /**
+     * @brief 重新加载配置文件
+     * @return 加载成功返回true，否则返回false
+     */
+    bool reloadConfig();
+
+    /**
+     * @brief 设置配置管理器
+     * @param config_manager 配置管理器的智能指针
+     */
+    void setConfigManager(std::shared_ptr<Go2ConfigManager> config_manager);
+
+    /**
+     * @brief 获取配置管理器
+     * @return 配置管理器的智能指针
+     */
+    std::shared_ptr<Go2ConfigManager> getConfigManager() const;
+
+    /**
+     * @brief 获取消息转换器配置
+     * @return 消息转换器配置的引用
+     */
+    const MessageConverterConfig& getMessageConverterConfig() const;
 
     // ============= 运动状态转换 =============
     
@@ -547,8 +600,9 @@ public:
 
 private:
     // ============= 内部数据 =============
-    ConversionOptions options_;                     ///< 转换选项
-    mutable std::string last_error_;                ///< 最后错误信息
+    ConversionOptions options_;                       ///< 转换选项
+    std::shared_ptr<Go2ConfigManager> config_manager_; ///< 配置管理器
+    mutable std::string last_error_;                  ///< 最后错误信息
     
     // 统计信息
     struct ConversionStats {
@@ -584,11 +638,21 @@ private:
      * @brief 初始化转换映射表
      */
     void initializeMappingTables();
+
+    /**
+     * @brief 从配置管理器初始化转换映射表
+     */
+    void initializeMappingTablesFromConfig();
     
     /**
      * @brief 初始化坐标变换矩阵
      */
     void initializeTransformMatrices();
+
+    /**
+     * @brief 从配置管理器初始化坐标变换矩阵
+     */
+    void initializeTransformMatricesFromConfig();
     
     /**
      * @brief 记录转换统计

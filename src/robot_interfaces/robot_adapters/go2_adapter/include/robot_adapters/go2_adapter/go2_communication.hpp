@@ -37,6 +37,9 @@
 #include <chrono>               // C++时间库
 #include <condition_variable>   // C++条件变量，用于线程同步
 
+// 导入Go2配置管理器
+#include "robot_adapters/go2_adapter/go2_config_manager.hpp"
+
 // 导入Unitree Go2官方定义的ROS2消息类型
 #include "unitree_go/msg/sport_mode_state.hpp"      // 运动模式状态
 #include "unitree_go/msg/low_state.hpp"             // 机器人底层状态
@@ -117,6 +120,13 @@ public:
      * @param node 一个指向外部ROS节点的共享指针，本类将使用该节点来创建ROS实体。
      */
     explicit Go2Communication(std::shared_ptr<rclcpp::Node> node);
+
+    /**
+     * @brief 带配置文件的构造函数
+     * @param node 一个指向外部ROS节点的共享指针，本类将使用该节点来创建ROS实体。
+     * @param config_file_path 配置文件路径
+     */
+    Go2Communication(std::shared_ptr<rclcpp::Node> node, const std::string& config_file_path);
 
     /**
      * @brief 析构函数
@@ -362,6 +372,27 @@ public:
      */
     bool applyNetworkOptimization();
 
+    // ============= 配置管理 =============
+
+    /**
+     * @brief 重新加载配置文件
+     * @return 加载成功返回true，否则返回false
+     */
+    bool reloadConfig();
+
+    /**
+     * @brief 获取当前的通信配置
+     * @return 通信配置结构体的常量引用
+     */
+    const CommunicationConfig& getConfig() const;
+
+    /**
+     * @brief 更新配置并应用
+     * @param config 新的通信配置
+     * @return 更新成功返回true，否则返回false
+     */
+    bool updateConfig(const CommunicationConfig& config);
+
     // ============= 错误处理与诊断 =============
 
     /**
@@ -454,16 +485,8 @@ private:
     std::atomic<bool> auto_reconnect_enabled_;  ///< 原子变量，标记是否启用自动重连
     std::atomic<bool> verbose_logging_;         ///< 原子变量，标记是否启用详细日志
 
-    // --- 网络配置 ---
-    struct NetworkConfig {
-        std::string robot_ip = "192.168.123.18";    ///< Go2机器人的默认IP地址
-        std::string local_ip = "192.168.123.99";    ///< 本地设备的IP地址
-        std::string network_interface = "enp129s0"; ///< 默认使用的网络接口
-        int dds_domain_id = 0;                      ///< DDS域ID
-        int connection_timeout_ms = 10000;          ///< 连接超时时间（毫秒）
-        int reconnect_interval_ms = 5000;           ///< 自动重连间隔（毫秒）
-        int max_reconnect_attempts = 0;             ///< 最大重连次数（0为无限）
-    } network_config_;
+    // --- 配置管理器 ---
+    std::unique_ptr<Go2ConfigManager> config_manager_;  ///< 配置管理器实例
 
     // --- ROS2 发布者与订阅者 ---
     // Go2机器人唯一支持的控制命令发布者
